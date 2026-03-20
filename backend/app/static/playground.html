@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TeleVault Playground</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #21262d;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  header h1 { font-size: 16px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+
+  .global-inputs {
+    display: flex;
+    gap: 12px;
+    flex: 1;
+    flex-wrap: wrap;
+  }
+
+  .global-inputs label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .global-inputs input {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+
+  #base-url { width: 200px; }
+  #jwt-token { width: 320px; }
+
+  /* ── Layout ── */
+  .layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  nav {
+    width: 200px;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    flex-shrink: 0;
+    padding: 12px 0;
+  }
+
+  nav .section-header {
+    padding: 8px 16px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  nav .section-header:hover { color: var(--text); }
+
+  nav .section-header .chevron { transition: transform .2s; }
+  nav .section-header.collapsed .chevron { transform: rotate(-90deg); }
+
+  nav .nav-links { padding-bottom: 4px; }
+  nav .nav-links.hidden { display: none; }
+
+  nav a {
+    display: block;
+    padding: 5px 16px 5px 24px;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 12px;
+    border-left: 2px solid transparent;
+    transition: all .15s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  nav a:hover { color: var(--text); background: var(--bg3); }
+  nav a.active { color: var(--accent); border-left-color: var(--accent); }
+
+  /* ── Main content ── */
+  main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  /* ── Section ── */
+  .section { scroll-margin-top: 16px; }
+
+  .section-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .endpoints { display: flex; flex-direction: column; gap: 12px; }
+
+  /* ── Endpoint card ── */
+  .endpoint {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .endpoint-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    user-select: none;
+    transition: background .15s;
+  }
+
+  .endpoint-header:hover { background: var(--bg3); }
+
+  .method-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    min-width: 52px;
+    text-align: center;
+  }
+
+  .method-GET    { background: #1a3a2a; color: #3fb950; border: 1px solid #2d5a3d; }
+  .method-POST   { background: #1a2d4a; color: #58a6ff; border: 1px solid #2d4a6a; }
+  .method-PATCH  { background: #3a2d1a; color: #e3b341; border: 1px solid #5a4a2d; }
+  .method-DELETE { background: #3a1a1a; color: #f85149; border: 1px solid #5a2d2d; }
+
+  .endpoint-path {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text);
+    flex: 1;
+  }
+
+  .endpoint-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .endpoint-body {
+    border-top: 1px solid var(--border);
+    padding: 14px;
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .endpoint-body.open { display: flex; }
+
+  /* ── Form fields ── */
+  .fields { display: flex; flex-direction: column; gap: 8px; }
+
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .field label {
+    font-size: 12px;
+    color: var(--text-muted);
+    min-width: 140px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .field input[type=text],
+  .field input[type=password],
+  .field input[type=number],
+  .field select,
+  .field textarea {
+    flex: 1;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    min-width: 0;
+  }
+
+  .field input[type=file] {
+    flex: 1;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .field textarea { resize: vertical; min-height: 60px; }
+
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    transition: all .15s;
+    color: var(--text);
+    background: var(--bg3);
+  }
+
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-primary { background: #1a3a5c; border-color: var(--accent); color: var(--accent); }
+  .btn-primary:hover { background: #204870; }
+  .btn-danger { background: #3a1a1a; border-color: var(--red); color: var(--red); }
+  .btn-danger:hover { background: #4a2020; }
+
+  .btn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  /* ── Request preview ── */
+  .request-preview {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+    display: none;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .request-preview.visible { display: block; }
+
+  /* ── Response ── */
+  .response-area {
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .response-area.visible { display: flex; }
+
+  .status-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+
+  .status-code {
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .status-2xx { background: #1a3a2a; color: var(--green); }
+  .status-4xx, .status-5xx { background: #3a1a1a; color: var(--red); }
+  .status-3xx { background: #3a2d1a; color: var(--yellow); }
+
+  .response-body {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: auto;
+    max-height: 400px;
+  }
+
+  .response-body pre {
+    margin: 0;
+    padding: 12px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  /* ── Progress bar ── */
+  .progress-wrap {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .progress-wrap.visible { display: flex; }
+
+  .progress-label { font-size: 11px; color: var(--text-muted); }
+
+  .progress-bar-outer {
+    height: 6px;
+    background: var(--bg3);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .progress-bar-inner {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width .3s;
+    width: 0%;
+  }
+
+  .progress-bar-inner.indeterminate {
+    width: 40% !important;
+    background: linear-gradient(90deg, transparent 0%, var(--accent) 40%, #a8d8ff 60%, var(--accent) 100%);
+    background-size: 200% 100%;
+    animation: indeterminate-slide 1.2s linear infinite;
+    transition: none;
+  }
+
+  @keyframes indeterminate-slide {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* ── History log ── */
+  #history-section {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+
+  #history-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+
+  #history-toggle:hover { color: var(--text); }
+  #history-toggle .chevron { transition: transform .2s; }
+  #history-toggle.collapsed .chevron { transform: rotate(-90deg); }
+
+  #history-list { display: flex; flex-direction: column; gap: 8px; }
+  #history-list.hidden { display: none; }
+
+  .history-item {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .history-item:hover { border-color: var(--accent); }
+
+  .history-item .hi-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .history-item .hi-url { color: var(--text-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-item .hi-time { color: var(--text-muted); font-size: 10px; }
+
+  .history-item .hi-body {
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 80px;
+    overflow: hidden;
+    display: none;
+  }
+
+  .history-item.expanded .hi-body { display: block; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ TeleVault Playground</h1>
+  <div class="global-inputs">
+    <label>
+      Base URL
+      <input id="base-url" type="text" value="http://localhost:8000" spellcheck="false">
+    </label>
+    <label>
+      JWT Token
+      <input id="jwt-token" type="text" placeholder="Bearer token (auto-filled on login)" spellcheck="false">
+    </label>
+  </div>
+</header>
+
+<div class="layout">
+  <nav id="sidebar"></nav>
+  <main id="main-content"></main>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let refreshToken = null;
+const history = [];
+const MAX_HISTORY = 20;
+
+const baseUrl = () => document.getElementById('base-url').value.replace(/\/$/, '');
+const jwtToken = () => document.getElementById('jwt-token').value.trim();
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function statusClass(code) {
+  if (code >= 200 && code < 300) return 'status-2xx';
+  if (code >= 300 && code < 400) return 'status-3xx';
+  if (code >= 400 && code < 500) return 'status-4xx';
+  return 'status-5xx';
+}
+
+function authHeaders() {
+  const t = jwtToken();
+  return t ? { 'Authorization': `Bearer ${t}` } : {};
+}
+
+function fmtNow() {
+  return new Date().toLocaleTimeString();
+}
+
+function fmtBytes(n) {
+  if (n == null) return '?';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+function syntaxHighlight(json) {
+  if (typeof hljs !== 'undefined') {
+    return hljs.highlight(json, { language: 'json' }).value;
+  }
+  return json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function addToHistory(method, url, status, responseText) {
+  history.unshift({ method, url, status, responseText, time: fmtNow() });
+  if (history.length > MAX_HISTORY) history.pop();
+  renderHistory();
+}
+
+
+// Computes SHA-256 in a Web Worker so the main thread is never blocked.
+// onProgress(0..1) is called with chunk progress while hashing.
+function computeSHA256(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker('/static/hash-worker.js');
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'progress') { onProgress?.(data.value); }
+      else if (data.type === 'done') { worker.terminate(); resolve(data.hash); }
+      else if (data.type === 'error') { worker.terminate(); reject(new Error(data.message)); }
+    };
+    worker.onerror = (e) => { worker.terminate(); reject(e); };
+    worker.postMessage(file);
+  });
+}
+
+// ── SSE progress ────────────────────────────────────────────────────────────
+function connectSSEProgress(operationId, progressWrap, barInner, labelEl) {
+  if (!operationId) return;
+  progressWrap.classList.add('visible');
+  barInner.classList.add('indeterminate');
+  if (labelEl) labelEl.textContent = 'Downloading…';
+  const token = jwtToken();
+  const url = `${baseUrl()}/api/v1/progress/${operationId}${token ? '?token=' + encodeURIComponent(token) : ''}`;
+  const es = new EventSource(url);
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      const pct = data.pct ?? data.percent ?? data.progress ?? 0;
+      barInner.classList.remove('indeterminate');
+      barInner.style.width = pct + '%';
+      if (labelEl) {
+        if (data.bytes_total > 0) {
+          labelEl.textContent = `Uploading… ${fmtBytes(data.bytes_done)} / ${fmtBytes(data.bytes_total)} (${Math.round(pct)}%)`;
+        } else {
+          labelEl.textContent = data.message || `Uploading… ${Math.round(pct)}%`;
+        }
+      }
+      if (pct >= 100 || data.status === 'done') { es.close(); }
+    } catch {}
+  };
+  es.onerror = () => es.close();
+}
+
+// ── Core request ────────────────────────────────────────────────────────────
+async function doRequest({ method, url, headers = {}, body = null, isFormData = false,
+                           previewEl, responseArea, statusLine, responseBody,
+                           progressWrap, barInner, progressLabel,
+                           onSuccess }) {
+  const fullUrl = baseUrl() + url;
+  const allHeaders = { ...authHeaders(), ...headers };
+
+  // Build preview
+  let previewText = `${method} ${fullUrl}\n`;
+  Object.entries(allHeaders).forEach(([k, v]) => {
+    previewText += `${k}: ${v === jwtToken() ? v.slice(0, 20) + '...' : v}\n`;
+  });
+  if (body && !isFormData) {
+    previewText += '\n' + (typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+  } else if (isFormData) {
+    previewText += '\n[FormData / multipart]';
+  }
+  previewEl.textContent = previewText;
+  previewEl.classList.add('visible');
+
+  let fetchOptions = { method, headers: allHeaders };
+  if (body !== null) {
+    if (isFormData) {
+      fetchOptions.body = body;
+    } else {
+      fetchOptions.headers['Content-Type'] = 'application/json';
+      fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+    }
+  }
+
+  try {
+    const resp = await fetch(fullUrl, fetchOptions);
+    const opId = resp.headers.get('X-Operation-Id');
+
+    // For binary file downloads, track progress directly from the response stream
+    const isFileDownload = resp.ok && method === 'GET' && url.includes('/download');
+    if (isFileDownload) {
+      const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
+      if (progressWrap) {
+        barInner.classList.remove('indeterminate');
+        barInner.style.width = '0%';
+        if (progressLabel) progressLabel.textContent = contentLength > 0
+          ? `Downloading… 0 B / ${fmtBytes(contentLength)} (0%)`
+          : 'Downloading…';
+        progressWrap.classList.add('visible');
+      }
+
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let receivedLength = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        receivedLength += value.length;
+        if (progressWrap) {
+          const pct = contentLength > 0 ? (receivedLength / contentLength * 100) : 0;
+          barInner.style.width = pct + '%';
+          if (progressLabel) progressLabel.textContent = contentLength > 0
+            ? `Downloading… ${fmtBytes(receivedLength)} / ${fmtBytes(contentLength)} (${Math.round(pct)}%)`
+            : `Downloading… ${fmtBytes(receivedLength)}`;
+        }
+      }
+      if (progressWrap) progressWrap.classList.remove('visible');
+      const blob = new Blob(chunks);
+      const cd = resp.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+      const filename = match ? match[1].replace(/['"]/g, '') : 'download';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+
+      responseArea.classList.add('visible');
+      statusLine.innerHTML = `<span class="status-code ${statusClass(resp.status)}">${resp.status} ${resp.statusText}</span>`;
+      responseBody.innerHTML = `<pre><code>[binary file download: ${filename}]</code></pre>`;
+      addToHistory(method, fullUrl, resp.status, `[binary download: ${filename}]`);
+    } else {
+      if (opId && progressWrap) {
+        connectSSEProgress(opId, progressWrap, barInner, progressLabel);
+      }
+      let respText = await resp.text();
+      let displayed;
+      try {
+        const parsed = JSON.parse(respText);
+        displayed = syntaxHighlight(JSON.stringify(parsed, null, 2));
+      } catch {
+        displayed = respText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      responseArea.classList.add('visible');
+      statusLine.innerHTML = `<span class="status-code ${statusClass(resp.status)}">${resp.status} ${resp.statusText}</span>`;
+      responseBody.innerHTML = `<pre><code>${displayed}</code></pre>`;
+
+      addToHistory(method, fullUrl, resp.status, respText);
+
+      if (resp.ok && onSuccess) {
+        try { onSuccess(JSON.parse(respText)); } catch {}
+      }
+    }
+  } catch (err) {
+    responseArea.classList.add('visible');
+    statusLine.innerHTML = `<span class="status-code status-5xx">Network Error</span>`;
+    responseBody.innerHTML = `<pre><code>${String(err)}</code></pre>`;
+    addToHistory(method, fullUrl, 0, String(err));
+  }
+}
+
+// ── Endpoint builder ─────────────────────────────────────────────────────────
+function makeEndpoint({ id, method, path, desc, fields = [], sendFn }) {
+  const ep = document.createElement('div');
+  ep.className = 'endpoint';
+  ep.id = 'ep-' + id;
+
+  const header = document.createElement('div');
+  header.className = 'endpoint-header';
+  header.innerHTML = `
+    <span class="method-badge method-${method}">${method}</span>
+    <span class="endpoint-path">${path}</span>
+    <span class="endpoint-desc">${desc || ''}</span>
+  `;
+
+  const body = document.createElement('div');
+  body.className = 'endpoint-body';
+
+  // Fields
+  const fieldEls = {};
+  if (fields.length) {
+    const fieldsDiv = document.createElement('div');
+    fieldsDiv.className = 'fields';
+    fields.forEach(f => {
+      const row = document.createElement('div');
+      row.className = 'field';
+      const label = document.createElement('label');
+      label.textContent = f.label || f.name;
+      label.htmlFor = `${id}-${f.name}`;
+
+      let input;
+      if (f.type === 'file') {
+        input = document.createElement('input');
+        input.type = 'file';
+      } else if (f.type === 'select') {
+        input = document.createElement('select');
+        (f.options || []).forEach(opt => {
+          const o = document.createElement('option');
+          o.value = opt.value ?? opt;
+          o.textContent = opt.label ?? opt;
+          input.appendChild(o);
+        });
+      } else if (f.type === 'textarea') {
+        input = document.createElement('textarea');
+        input.rows = 3;
+      } else {
+        input = document.createElement('input');
+        input.type = f.type || 'text';
+      }
+      input.id = `${id}-${f.name}`;
+      if (f.placeholder) input.placeholder = f.placeholder;
+      if (f.defaultValue != null) input.value = f.defaultValue;
+      if (f.pattern) input.pattern = f.pattern;
+      if (f.title) input.title = f.title;
+      fieldEls[f.name] = input;
+      row.appendChild(label);
+      row.appendChild(input);
+      fieldsDiv.appendChild(row);
+    });
+    body.appendChild(fieldsDiv);
+  }
+
+  // Progress (for upload/download)
+  const progressWrap = document.createElement('div');
+  progressWrap.className = 'progress-wrap';
+  const progressLabel = document.createElement('div');
+  progressLabel.className = 'progress-label';
+  progressLabel.textContent = 'Progress';
+  const barOuter = document.createElement('div');
+  barOuter.className = 'progress-bar-outer';
+  const barInner = document.createElement('div');
+  barInner.className = 'progress-bar-inner';
+  barOuter.appendChild(barInner);
+  progressWrap.appendChild(progressLabel);
+  progressWrap.appendChild(barOuter);
+  body.appendChild(progressWrap);
+
+  // Request preview
+  const previewEl = document.createElement('pre');
+  previewEl.className = 'request-preview';
+  body.appendChild(previewEl);
+
+  // Send button row
+  const btnRow = document.createElement('div');
+  btnRow.className = 'btn-row';
+  const sendBtn = document.createElement('button');
+  sendBtn.className = `btn ${method === 'DELETE' ? 'btn-danger' : 'btn-primary'}`;
+  sendBtn.textContent = `Send ${method}`;
+  btnRow.appendChild(sendBtn);
+  body.appendChild(btnRow);
+
+  // Response area
+  const responseArea = document.createElement('div');
+  responseArea.className = 'response-area';
+  const statusLine = document.createElement('div');
+  statusLine.className = 'status-line';
+  const responseBody = document.createElement('div');
+  responseBody.className = 'response-body';
+  responseArea.appendChild(statusLine);
+  responseArea.appendChild(responseBody);
+  body.appendChild(responseArea);
+
+  // Toggle open/close
+  header.addEventListener('click', () => {
+    body.classList.toggle('open');
+  });
+
+  sendBtn.addEventListener('click', () => {
+    // Reset progress
+    barInner.style.width = '0%';
+    barInner.classList.remove('indeterminate');
+    progressLabel.textContent = 'Progress';
+    progressWrap.classList.remove('visible');
+    sendFn({
+      fieldEls,
+      previewEl, responseArea, statusLine, responseBody,
+      progressWrap, barInner, progressLabel,
+    });
+  });
+
+  ep.appendChild(header);
+  ep.appendChild(body);
+  return ep;
+}
+
+// ── Sections definition ────────────────────────────────────────────────────
+const sections = [
+  {
+    id: 'auth',
+    title: 'Auth',
+    endpoints: [
+      {
+        id: 'auth-phone', method: 'POST', path: '/api/v1/auth/phone',
+        desc: 'Request OTP',
+        fields: [{ name: 'phone', label: 'Phone Number', placeholder: '+1234567890' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'POST', url: '/api/v1/auth/phone',
+            body: { phone: fieldEls.phone.value },
+            ...rest,
+          });
+        },
+      },
+      {
+        id: 'auth-otp', method: 'POST', path: '/api/v1/auth/otp',
+        desc: 'Verify OTP / login',
+        fields: [
+          { name: 'phone', label: 'Phone Number', placeholder: '+1234567890' },
+          { name: 'code', label: 'OTP Code', placeholder: '12345' },
+          { name: 'password', label: 'Password (optional)', placeholder: '2FA password' },
+        ],
+        send({ fieldEls, ...rest }) {
+          const body = { phone: fieldEls.phone.value, code: fieldEls.code.value };
+          if (fieldEls.password.value) body.password = fieldEls.password.value;
+          doRequest({
+            method: 'POST', url: '/api/v1/auth/otp', body, ...rest,
+            onSuccess(data) {
+              if (data.access_token) {
+                document.getElementById('jwt-token').value = data.access_token;
+              }
+              if (data.refresh_token) refreshToken = data.refresh_token;
+            },
+          });
+        },
+      },
+      {
+        id: 'auth-qr-init', method: 'POST', path: '/api/v1/auth/qr/init',
+        desc: 'Init QR login',
+        fields: [],
+        send({ ...rest }) {
+          doRequest({ method: 'POST', url: '/api/v1/auth/qr/init', ...rest });
+        },
+      },
+      {
+        id: 'auth-qr-poll', method: 'GET', path: '/api/v1/auth/qr/poll',
+        desc: 'Poll QR login status',
+        fields: [{ name: 'poll_token', label: 'Poll Token', placeholder: 'token from qr/init' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'GET',
+            url: `/api/v1/auth/qr/poll?poll_token=${encodeURIComponent(fieldEls.poll_token.value)}`,
+            ...rest,
+            onSuccess(data) {
+              if (data.access_token) {
+                document.getElementById('jwt-token').value = data.access_token;
+              }
+              if (data.refresh_token) refreshToken = data.refresh_token;
+            },
+          });
+        },
+      },
+      {
+        id: 'auth-refresh', method: 'POST', path: '/api/v1/auth/refresh',
+        desc: 'Refresh access token',
+        fields: [{ name: 'refresh_token', label: 'Refresh Token', placeholder: 'auto-filled on login' }],
+        send({ fieldEls, ...rest }) {
+          const rt = fieldEls.refresh_token.value || refreshToken || '';
+          doRequest({
+            method: 'POST', url: '/api/v1/auth/refresh',
+            body: { refresh_token: rt }, ...rest,
+            onSuccess(data) {
+              if (data.access_token) document.getElementById('jwt-token').value = data.access_token;
+              if (data.refresh_token) refreshToken = data.refresh_token;
+            },
+          });
+        },
+      },
+      {
+        id: 'auth-logout', method: 'POST', path: '/api/v1/auth/logout',
+        desc: 'Logout',
+        fields: [{ name: 'refresh_token', label: 'Refresh Token', placeholder: 'auto-filled on login' }],
+        send({ fieldEls, ...rest }) {
+          const rt = fieldEls.refresh_token.value || refreshToken || '';
+          doRequest({
+            method: 'POST', url: '/api/v1/auth/logout',
+            body: { refresh_token: rt }, ...rest,
+          });
+        },
+      },
+      {
+        id: 'auth-me', method: 'GET', path: '/api/v1/auth/me',
+        desc: 'Get current user',
+        fields: [],
+        send({ ...rest }) {
+          doRequest({ method: 'GET', url: '/api/v1/auth/me', ...rest });
+        },
+      },
+      {
+        id: 'auth-accounts', method: 'GET', path: '/api/v1/auth/accounts',
+        desc: 'List linked Telegram accounts (get account UUIDs)',
+        fields: [],
+        send({ ...rest }) {
+          doRequest({ method: 'GET', url: '/api/v1/auth/accounts', ...rest });
+        },
+      },
+      {
+        id: 'auth-me-photo', method: 'GET', path: '/api/v1/auth/me/photo',
+        desc: 'Get current user Telegram profile photo (binary image or 204 if none)',
+        fields: [],
+        send({ responseArea, statusLine, responseBody, previewEl }) {
+          const token = jwtToken();
+          const fullUrl = baseUrl() + '/api/v1/auth/me/photo';
+          previewEl.style.display = 'block';
+          previewEl.textContent = `GET ${fullUrl}\nAuthorization: Bearer ${token || '(no token)'}`;
+          responseArea.style.display = 'block';
+          fetch(fullUrl, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+            .then(async resp => {
+              const cls = resp.status >= 500 ? 'status-5xx' : resp.status >= 400 ? 'status-4xx' : resp.status >= 300 ? 'status-3xx' : 'status-2xx';
+              statusLine.innerHTML = `<span class="status-badge ${cls}">${resp.status}</span>`;
+              addToHistory('GET', fullUrl, resp.status, `[photo response]`);
+              if (resp.status === 204) {
+                responseBody.innerHTML = '<pre><code>(204 No Content — user has no profile photo)</code></pre>';
+                return;
+              }
+              if (!resp.ok) {
+                const text = await resp.text();
+                responseBody.innerHTML = `<pre><code class="language-json">${syntaxHighlight(text)}</code></pre>`;
+                return;
+              }
+              const blob = await resp.blob();
+              const objectUrl = URL.createObjectURL(blob);
+              responseBody.innerHTML = `<img src="${objectUrl}" alt="Profile photo" style="max-width:200px;max-height:200px;border-radius:50%;display:block;margin:8px 0;">`;
+            })
+            .catch(err => {
+              statusLine.innerHTML = '<span class="status-badge status-5xx">ERR</span>';
+              responseBody.innerHTML = `<pre><code>${String(err)}</code></pre>`;
+              addToHistory('GET', fullUrl, 0, String(err));
+            });
+        },
+      },
+    ],
+  },
+  {
+    id: 'channels',
+    title: 'Channels',
+    endpoints: [
+      {
+        id: 'channels-list', method: 'GET', path: '/api/v1/channels',
+        desc: 'List channels',
+        fields: [],
+        send({ ...rest }) { doRequest({ method: 'GET', url: '/api/v1/channels', ...rest }); },
+      },
+      {
+        id: 'channels-create', method: 'POST', path: '/api/v1/channels',
+        desc: 'Add channel',
+        fields: [
+          { name: 'telegram_account_id', label: 'Telegram Account ID', placeholder: '123' },
+          { name: 'channel_id', label: 'Channel ID', placeholder: '-1001234567890' },
+          { name: 'label', label: 'Label', placeholder: 'My Channel' },
+        ],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'POST', url: '/api/v1/channels',
+            body: {
+              telegram_account_id: fieldEls.telegram_account_id.value,
+              channel_id: fieldEls.channel_id.value,
+              label: fieldEls.label.value,
+            }, ...rest,
+          });
+        },
+      },
+      {
+        id: 'channels-patch', method: 'PATCH', path: '/api/v1/channels/:id',
+        desc: 'Update channel label',
+        fields: [
+          { name: 'id', label: 'Channel ID', placeholder: 'uuid' },
+          { name: 'label', label: 'New Label', placeholder: 'New name' },
+        ],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'PATCH', url: `/api/v1/channels/${fieldEls.id.value}`,
+            body: { label: fieldEls.label.value }, ...rest,
+          });
+        },
+      },
+      {
+        id: 'channels-delete', method: 'DELETE', path: '/api/v1/channels/:id',
+        desc: 'Delete channel',
+        fields: [{ name: 'id', label: 'Channel ID', placeholder: 'uuid' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({ method: 'DELETE', url: `/api/v1/channels/${fieldEls.id.value}`, ...rest });
+        },
+      },
+      {
+        id: 'channels-set-default', method: 'POST', path: '/api/v1/channels/:id/set-default',
+        desc: 'Set as default channel',
+        fields: [{ name: 'id', label: 'Channel ID', placeholder: 'uuid' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({ method: 'POST', url: `/api/v1/channels/${fieldEls.id.value}/set-default`, ...rest });
+        },
+      },
+    ],
+  },
+  {
+    id: 'dialogs',
+    title: 'Dialogs',
+    endpoints: [
+      {
+        id: 'dialogs-list', method: 'GET', path: '/api/v1/dialogs/:account_id',
+        desc: 'List Telegram channels & supergroups for an account',
+        fields: [
+          { name: 'account_id', label: 'Telegram Account ID', placeholder: 'uuid' },
+          { name: 'admin', label: 'Admin only', type: 'select', options: [{ value: 'false', label: 'No' }, { value: 'true', label: 'Yes' }] },
+        ],
+        send({ fieldEls, ...rest }) {
+          const params = new URLSearchParams();
+          if (fieldEls.admin.value === 'true') params.set('admin', 'true');
+          const qs = params.toString() ? `?${params}` : '';
+          doRequest({ method: 'GET', url: `/api/v1/dialogs/${fieldEls.account_id.value}${qs}`, ...rest });
+        },
+      },
+    ],
+  },
+  {
+    id: 'folders',
+    title: 'Folders',
+    endpoints: [
+      {
+        id: 'folders-list', method: 'GET', path: '/api/v1/folders',
+        desc: 'List root folders',
+        fields: [],
+        send({ ...rest }) { doRequest({ method: 'GET', url: '/api/v1/folders', ...rest }); },
+      },
+      {
+        id: 'folders-create', method: 'POST', path: '/api/v1/folders',
+        desc: 'Create folder',
+        fields: [
+          { name: 'name', label: 'Name', placeholder: 'My Folder' },
+          { name: 'parent_slug', label: 'Parent Slug (optional)', placeholder: 'parent-slug' },
+          { name: 'default_channel_id', label: 'Default Channel ID (opt)', placeholder: 'uuid' },
+        ],
+        send({ fieldEls, ...rest }) {
+          const body = { name: fieldEls.name.value };
+          if (fieldEls.parent_slug.value) body.parent_slug = fieldEls.parent_slug.value;
+          if (fieldEls.default_channel_id.value) body.default_channel_id = fieldEls.default_channel_id.value;
+          doRequest({ method: 'POST', url: '/api/v1/folders', body, ...rest });
+        },
+      },
+      {
+        id: 'folders-get', method: 'GET', path: '/api/v1/folders/:slug',
+        desc: 'Get folder by slug',
+        fields: [{ name: 'slug', label: 'Slug', placeholder: 'my-folder' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({ method: 'GET', url: `/api/v1/folders/${fieldEls.slug.value}`, ...rest });
+        },
+      },
+      {
+        id: 'folders-children', method: 'GET', path: '/api/v1/folders/:slug/children',
+        desc: 'List children',
+        fields: [{ name: 'slug', label: 'Slug', placeholder: 'my-folder' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({ method: 'GET', url: `/api/v1/folders/${fieldEls.slug.value}/children`, ...rest });
+        },
+      },
+      {
+        id: 'folders-patch', method: 'PATCH', path: '/api/v1/folders/:slug',
+        desc: 'Update folder',
+        fields: [
+          { name: 'slug', label: 'Slug', placeholder: 'my-folder' },
+          { name: 'name', label: 'New Name', placeholder: 'New Name' },
+          { name: 'default_channel_id', label: 'Default Channel ID (opt)', placeholder: 'uuid' },
+        ],
+        send({ fieldEls, ...rest }) {
+          const body = { name: fieldEls.name.value };
+          if (fieldEls.default_channel_id.value) body.default_channel_id = fieldEls.default_channel_id.value;
+          doRequest({ method: 'PATCH', url: `/api/v1/folders/${fieldEls.slug.value}`, body, ...rest });
+        },
+      },
+      {
+        id: 'folders-icon', method: 'POST', path: '/api/v1/icons/:slug',
+        desc: 'Upload folder icon',
+        fields: [
+          { name: 'slug', label: 'Slug', placeholder: 'my-folder' },
+          { name: 'file', label: 'Icon File', type: 'file' },
+        ],
+        send({ fieldEls, ...rest }) {
+          const fd = new FormData();
+          if (fieldEls.file.files[0]) fd.append('file', fieldEls.file.files[0]);
+          doRequest({
+            method: 'POST', url: `/api/v1/icons/${fieldEls.slug.value}`,
+            body: fd, isFormData: true, ...rest,
+          });
+        },
+      },
+      {
+        id: 'folders-icon-get', method: 'GET', path: '/api/v1/icons/:slug',
+        desc: 'Preview folder icon',
+        fields: [{ name: 'slug', label: 'Slug', placeholder: 'my-folder' }],
+        send({ fieldEls, previewEl, responseArea, statusLine, responseBody }) {
+          const slug = fieldEls.slug.value;
+          const url = `${baseUrl()}/api/v1/icons/${slug}`;
+          previewEl.textContent = `GET ${url}\nAuthorization: Bearer ${jwtToken().slice(0, 20)}...`;
+          previewEl.classList.add('visible');
+          fetch(url, { headers: authHeaders() }).then(async resp => {
+            responseArea.classList.add('visible');
+            statusLine.innerHTML = `<span class="status-code ${statusClass(resp.status)}">${resp.status} ${resp.statusText}</span>`;
+            if (!resp.ok) {
+              const txt = await resp.text();
+              responseBody.innerHTML = `<pre><code>${txt.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</code></pre>`;
+              return;
+            }
+            const width  = resp.headers.get('X-Image-Width')  || '?';
+            const height = resp.headers.get('X-Image-Height') || '?';
+            const size   = resp.headers.get('X-File-Size');
+            const blob = await resp.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const sizeStr = size ? `${(parseInt(size)/1024).toFixed(1)} KB (${parseInt(size).toLocaleString()} bytes)` : '?';
+            responseBody.innerHTML = `
+              <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:8px 0">
+                <img src="${objectUrl}" alt="folder icon"
+                     style="max-width:256px;max-height:256px;border-radius:6px;border:1px solid var(--border);background:repeating-conic-gradient(#444 0% 25%,#222 0% 50%) 0 0/16px 16px"/>
+                <table style="border-collapse:collapse;font-size:13px;align-self:center">
+                  <tr><td style="color:var(--text-muted);padding:3px 12px 3px 0">Resolution</td><td>${width} × ${height} px</td></tr>
+                  <tr><td style="color:var(--text-muted);padding:3px 12px 3px 0">File size</td><td>${sizeStr}</td></tr>
+                  <tr><td style="color:var(--text-muted);padding:3px 12px 3px 0">Format</td><td>WebP</td></tr>
+                </table>
+              </div>`;
+          }).catch(err => {
+            responseArea.classList.add('visible');
+            statusLine.innerHTML = `<span class="status-code status-5xx">Network Error</span>`;
+            responseBody.innerHTML = `<pre><code>${String(err)}</code></pre>`;
+          });
+        },
+      },
+      {
+        id: 'folders-move', method: 'POST', path: '/api/v1/folders/:slug/move',
+        desc: 'Move folder',
+        fields: [
+          { name: 'slug', label: 'Slug', placeholder: 'my-folder' },
+          { name: 'target_parent_slug', label: 'Target Parent Slug', placeholder: 'target-slug' },
+        ],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'POST', url: `/api/v1/folders/${fieldEls.slug.value}/move`,
+            body: { target_parent_slug: fieldEls.target_parent_slug.value }, ...rest,
+          });
+        },
+      },
+      {
+        id: 'folders-copy', method: 'POST', path: '/api/v1/folders/:slug/copy',
+        desc: 'Copy folder',
+        fields: [
+          { name: 'slug', label: 'Slug', placeholder: 'my-folder' },
+          { name: 'target_parent_slug', label: 'Target Parent Slug', placeholder: 'target-slug' },
+        ],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'POST', url: `/api/v1/folders/${fieldEls.slug.value}/copy`,
+            body: { target_parent_slug: fieldEls.target_parent_slug.value }, ...rest,
+          });
+        },
+      },
+      {
+        id: 'folders-delete', method: 'DELETE', path: '/api/v1/folders/:slug',
+        desc: 'Delete folder',
+        fields: [{ name: 'slug', label: 'Slug', placeholder: 'my-folder' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({ method: 'DELETE', url: `/api/v1/folders/${fieldEls.slug.value}`, ...rest });
+        },
+      },
+    ],
+  },
+  {
+    id: 'files',
+    title: 'Files',
+    endpoints: [
+      {
+        id: 'files-list', method: 'GET', path: '/api/v1/files',
+        desc: 'List files in folder',
+        fields: [{ name: 'folder_slug', label: 'folder_slug', placeholder: 'my-folder' }],
+        send({ fieldEls, ...rest }) {
+          const qs = fieldEls.folder_slug.value ? `?folder_slug=${encodeURIComponent(fieldEls.folder_slug.value)}` : '';
+          doRequest({ method: 'GET', url: `/api/v1/files${qs}`, ...rest });
+        },
+      },
+      {
+        id: 'files-get', method: 'GET', path: '/api/v1/files/:id',
+        desc: 'Get file metadata',
+        fields: [{ name: 'id', label: 'File ID', placeholder: 'uuid' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({ method: 'GET', url: `/api/v1/files/${fieldEls.id.value}`, ...rest });
+        },
+      },
+      {
+        id: 'files-upload', method: 'POST', path: '/api/v1/files/upload',
+        desc: 'Upload file (with SHA-256 + SSE progress)',
+        fields: [
+          { name: 'file', label: 'File', type: 'file' },
+          { name: 'folder_slug', label: 'folder_slug (optional)', placeholder: 'my-folder' },
+          { name: 'channel_id', label: 'channel_id (optional)', placeholder: 'uuid' },
+        ],
+        send({ fieldEls, progressWrap, barInner, progressLabel, ...rest }) {
+          const file = fieldEls.file.files[0];
+          if (!file) { alert('Select a file first.'); return; }
+
+          // Show determinate bar driven by hash progress
+          progressLabel.textContent = 'Hashing… 0%';
+          progressWrap.classList.add('visible');
+          barInner.style.width = '0%';
+
+          computeSHA256(file, pct => {
+            const pctInt = Math.round(pct * 100);
+            barInner.style.width = pctInt + '%';
+            progressLabel.textContent = `Hashing… ${pctInt}%`;
+          }).then(async sha256 => {
+            // Hashing complete — fill to 100% briefly then reset for upload phase
+            barInner.style.width = '100%';
+            progressLabel.textContent = 'Hashing… 100%';
+            await new Promise(r => setTimeout(r, 300));
+            // Pre-check: send only the hash first to detect duplicates before
+            // transmitting the entire file over the network.
+            progressLabel.textContent = 'Checking for duplicate…';
+            const checkResp = await fetch(baseUrl() + '/api/v1/files/check-hash', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...authHeaders() },
+              body: JSON.stringify({ file_hash: sha256 }),
+            });
+            if (!checkResp.ok) {
+              // Duplicate (409) or other error — show response and stop.
+              progressWrap.classList.remove('visible');
+              const payload = await checkResp.json().catch(() => ({}));
+              const { responseArea, statusLine, responseBody } = rest;
+              responseArea.classList.add('visible');
+              statusLine.innerHTML = `<span class="status-code ${statusClass(checkResp.status)}">${checkResp.status} ${checkResp.statusText}</span>`;
+              responseBody.innerHTML = `<pre><code>${syntaxHighlight(JSON.stringify(payload, null, 2))}</code></pre>`;
+              addToHistory('POST', baseUrl() + '/api/v1/files/check-hash', checkResp.status, JSON.stringify(payload));
+              return;
+            }
+
+            barInner.style.width = '0%';
+            progressLabel.textContent = 'Uploading…';
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('filename', file.name);
+            fd.append('folder_slug', fieldEls.folder_slug.value);
+            fd.append('file_hash', sha256);
+            if (fieldEls.channel_id.value) fd.append('channel_id', fieldEls.channel_id.value);
+            doRequest({
+              method: 'POST', url: '/api/v1/files/upload',
+              body: fd, isFormData: true,
+              progressWrap, barInner, progressLabel,
+              ...rest,
+              onSuccess(data) {
+                if (data.operation_id) {
+                  connectSSEProgress(data.operation_id, progressWrap, barInner, progressLabel);
+                }
+              },
+            });
+          });
+        },
+      },
+      {
+        id: 'files-download', method: 'GET', path: '/api/v1/files/:id/download',
+        desc: 'Download file (SSE progress via X-Operation-Id)',
+        fields: [{ name: 'id', label: 'File ID', placeholder: 'uuid' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({ method: 'GET', url: `/api/v1/files/${fieldEls.id.value}/download`, ...rest });
+        },
+      },
+      {
+        id: 'files-rename', method: 'PATCH', path: '/api/v1/files/:id',
+        desc: 'Rename file',
+        fields: [
+          { name: 'id', label: 'File ID', placeholder: 'uuid' },
+          { name: 'name', label: 'New Name', placeholder: 'new-name.jpg' },
+        ],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'PATCH', url: `/api/v1/files/${fieldEls.id.value}`,
+            body: { original_name: fieldEls.name.value }, ...rest,
+          });
+        },
+      },
+      {
+        id: 'files-move', method: 'POST', path: '/api/v1/files/:id/move',
+        desc: 'Move file',
+        fields: [
+          { name: 'id', label: 'File ID', placeholder: 'uuid' },
+          { name: 'target_folder_slug', label: 'Target Folder Slug', placeholder: 'target-folder' },
+        ],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'POST', url: `/api/v1/files/${fieldEls.id.value}/move`,
+            body: { target_folder_slug: fieldEls.target_folder_slug.value }, ...rest,
+          });
+        },
+      },
+      {
+        id: 'files-copy', method: 'POST', path: '/api/v1/files/:id/copy',
+        desc: 'Copy file',
+        fields: [
+          { name: 'id', label: 'File ID', placeholder: 'uuid' },
+          { name: 'target_folder_slug', label: 'Target Folder Slug', placeholder: 'target-folder' },
+        ],
+        send({ fieldEls, ...rest }) {
+          doRequest({
+            method: 'POST', url: `/api/v1/files/${fieldEls.id.value}/copy`,
+            body: { target_folder_slug: fieldEls.target_folder_slug.value }, ...rest,
+          });
+        },
+      },
+      {
+        id: 'files-delete', method: 'DELETE', path: '/api/v1/files/:id',
+        desc: 'Delete file',
+        fields: [{ name: 'id', label: 'File ID', placeholder: 'uuid' }],
+        send({ fieldEls, ...rest }) {
+          doRequest({ method: 'DELETE', url: `/api/v1/files/${fieldEls.id.value}`, ...rest });
+        },
+      },
+    ],
+  },
+  {
+    id: 'events',
+    title: 'Events',
+    endpoints: [
+      {
+        id: 'events-list', method: 'GET', path: '/api/v1/events',
+        desc: 'List events',
+        fields: [
+          { name: 'page', label: 'page', placeholder: '1', defaultValue: '1' },
+          { name: 'page_size', label: 'page_size', placeholder: '20', defaultValue: '20' },
+          { name: 'action', label: 'action filter (optional)', placeholder: 'upload' },
+        ],
+        send({ fieldEls, ...rest }) {
+          const params = new URLSearchParams();
+          if (fieldEls.page.value) params.set('page', fieldEls.page.value);
+          if (fieldEls.page_size.value) params.set('page_size', fieldEls.page_size.value);
+          if (fieldEls.action.value) params.set('action', fieldEls.action.value);
+          doRequest({ method: 'GET', url: `/api/v1/events?${params}`, ...rest });
+        },
+      },
+    ],
+  },
+  {
+    id: 'debug',
+    title: 'Debug / Reset',
+    endpoints: [
+      {
+        id: 'debug-reset-files', method: 'DELETE', path: '/api/v1/debug/reset/files',
+        desc: 'Delete all files and splits',
+        fields: [],
+        send({ ...rest }) { doRequest({ method: 'DELETE', url: '/api/v1/debug/reset/files', ...rest }); },
+      },
+      {
+        id: 'debug-reset-folders', method: 'DELETE', path: '/api/v1/debug/reset/folders',
+        desc: 'Delete all folders',
+        fields: [],
+        send({ ...rest }) { doRequest({ method: 'DELETE', url: '/api/v1/debug/reset/folders', ...rest }); },
+      },
+      {
+        id: 'debug-reset-channels', method: 'DELETE', path: '/api/v1/debug/reset/channels',
+        desc: 'Delete all channels',
+        fields: [],
+        send({ ...rest }) { doRequest({ method: 'DELETE', url: '/api/v1/debug/reset/channels', ...rest }); },
+      },
+      {
+        id: 'debug-reset-events', method: 'DELETE', path: '/api/v1/debug/reset/events',
+        desc: 'Delete all events',
+        fields: [],
+        send({ ...rest }) { doRequest({ method: 'DELETE', url: '/api/v1/debug/reset/events', ...rest }); },
+      },
+      {
+        id: 'debug-reset-users', method: 'DELETE', path: '/api/v1/debug/reset/users',
+        desc: 'Delete all users and refresh tokens',
+        fields: [],
+        send({ ...rest }) { doRequest({ method: 'DELETE', url: '/api/v1/debug/reset/users', ...rest }); },
+      },
+      {
+        id: 'debug-reset-all', method: 'DELETE', path: '/api/v1/debug/reset/all',
+        desc: '⚠ Wipe everything — files, folders, channels, events, users',
+        fields: [],
+        send({ ...rest }) {
+          if (!confirm('This will delete ALL data. Are you sure?')) return;
+          doRequest({ method: 'DELETE', url: '/api/v1/debug/reset/all', ...rest });
+        },
+      },
+    ],
+  },
+  {
+    id: 'search',
+    title: 'Search',
+    endpoints: [
+      {
+        id: 'search-query', method: 'GET', path: '/api/v1/search',
+        desc: 'Search files/folders',
+        fields: [
+          { name: 'q', label: 'q (query)', placeholder: 'search term' },
+          { name: 'type', label: 'type (file|folder)', placeholder: 'file' },
+          { name: 'folder_slug', label: 'folder_slug (optional)', placeholder: 'my-folder' },
+          { name: 'sort', label: 'sort (name|created|size)', placeholder: 'name' },
+          { name: 'order', label: 'order (asc|desc)', placeholder: 'asc' },
+          { name: 'page', label: 'page', placeholder: '1', defaultValue: '1' },
+        ],
+        send({ fieldEls, ...rest }) {
+          const params = new URLSearchParams();
+          if (fieldEls.q.value) params.set('q', fieldEls.q.value);
+          if (fieldEls.type.value) params.set('type', fieldEls.type.value);
+          if (fieldEls.folder_slug.value) params.set('folder_slug', fieldEls.folder_slug.value);
+          if (fieldEls.sort.value) params.set('sort', fieldEls.sort.value);
+          if (fieldEls.order.value) params.set('order', fieldEls.order.value);
+          if (fieldEls.page.value) params.set('page', fieldEls.page.value);
+          doRequest({ method: 'GET', url: `/api/v1/search?${params}`, ...rest });
+        },
+      },
+    ],
+  },
+];
+
+// ── Render sidebar ──────────────────────────────────────────────────────────
+function renderSidebar() {
+  const nav = document.getElementById('sidebar');
+  nav.innerHTML = '';
+  sections.forEach(sec => {
+    const secHeader = document.createElement('div');
+    secHeader.className = 'section-header';
+    secHeader.innerHTML = `${sec.title} <span class="chevron">▾</span>`;
+
+    const links = document.createElement('div');
+    links.className = 'nav-links';
+
+    sec.endpoints.forEach(ep => {
+      const a = document.createElement('a');
+      a.href = '#ep-' + ep.id;
+      a.textContent = `${ep.method} ${ep.path}`;
+      a.title = ep.path;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        const el = document.getElementById('ep-' + ep.id);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // Auto-open body
+          const body = el.querySelector('.endpoint-body');
+          if (body && !body.classList.contains('open')) body.classList.add('open');
+          // Highlight nav
+          document.querySelectorAll('nav a').forEach(x => x.classList.remove('active'));
+          a.classList.add('active');
+        }
+      });
+      links.appendChild(a);
+    });
+
+    secHeader.addEventListener('click', () => {
+      secHeader.classList.toggle('collapsed');
+      links.classList.toggle('hidden');
+    });
+
+    nav.appendChild(secHeader);
+    nav.appendChild(links);
+  });
+}
+
+// ── Render main content ─────────────────────────────────────────────────────
+function renderMain() {
+  const main = document.getElementById('main-content');
+  main.innerHTML = '';
+
+  sections.forEach(sec => {
+    const section = document.createElement('div');
+    section.className = 'section';
+    section.id = 'section-' + sec.id;
+
+    const title = document.createElement('h2');
+    title.className = 'section-title';
+    title.textContent = sec.title;
+    section.appendChild(title);
+
+    const endpoints = document.createElement('div');
+    endpoints.className = 'endpoints';
+
+    sec.endpoints.forEach(ep => {
+      endpoints.appendChild(makeEndpoint({
+        id: ep.id,
+        method: ep.method,
+        path: ep.path,
+        desc: ep.desc,
+        fields: ep.fields,
+        sendFn: ep.send,
+      }));
+    });
+
+    section.appendChild(endpoints);
+    main.appendChild(section);
+  });
+
+  // History section
+  const historySec = document.createElement('div');
+  historySec.id = 'history-section';
+
+  const toggle = document.createElement('div');
+  toggle.id = 'history-toggle';
+  toggle.innerHTML = `Request History (last ${MAX_HISTORY}) <span class="chevron">▾</span>`;
+  toggle.addEventListener('click', () => {
+    toggle.classList.toggle('collapsed');
+    document.getElementById('history-list').classList.toggle('hidden');
+  });
+
+  const list = document.createElement('div');
+  list.id = 'history-list';
+
+  historySec.appendChild(toggle);
+  historySec.appendChild(list);
+  main.appendChild(historySec);
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  if (!list) return;
+  list.innerHTML = '';
+  history.forEach((item, i) => {
+    const el = document.createElement('div');
+    el.className = 'history-item';
+
+    const methodBadge = `<span class="method-badge method-${item.method}" style="font-size:10px;padding:1px 5px">${item.method}</span>`;
+    const statusBadge = item.status
+      ? `<span class="status-code ${statusClass(item.status)}" style="font-size:10px;padding:1px 6px">${item.status}</span>`
+      : '<span class="status-code status-5xx" style="font-size:10px;padding:1px 6px">ERR</span>';
+
+    el.innerHTML = `
+      <div class="hi-top">
+        ${methodBadge}
+        ${statusBadge}
+        <span class="hi-url">${item.url}</span>
+        <span class="hi-time">${item.time}</span>
+      </div>
+      <div class="hi-body">${item.responseText ? item.responseText.slice(0, 500) : ''}</div>
+    `;
+
+    el.addEventListener('click', () => el.classList.toggle('expanded'));
+    list.appendChild(el);
+  });
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+renderSidebar();
+renderMain();
+
+// Scroll spy
+const mainEl = document.getElementById('main-content');
+mainEl.addEventListener('scroll', () => {
+  const navLinks = document.querySelectorAll('nav a');
+  let current = null;
+  document.querySelectorAll('.endpoint').forEach(ep => {
+    const rect = ep.getBoundingClientRect();
+    if (rect.top < 200) current = ep.id;
+  });
+  navLinks.forEach(a => {
+    a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+  });
+});
+</script>
+</body>
+</html>

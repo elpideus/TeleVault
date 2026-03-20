@@ -1,0 +1,135 @@
+:root {
+  /* ── CSS transition bridge — animates all token changes smoothly ────────── */
+  transition:
+    background-color 200ms ease,
+    color 200ms ease,
+    border-color 200ms ease;
+
+  /* ── Surfaces (Material 3 tonal elevation model) ─────────────────────────
+     Each level adds a subtle accent tint on top of the base, creating
+     perceptual depth without heavy shadows. Higher = more tint = "closer". */
+  --tv-bg-base: #0d0d0f;        /* Level 0 — app background */
+  --tv-bg-elevated: #161618;    /* Level 1 — sidebar, cards at rest */
+  --tv-bg-overlay: #1e1e21;     /* Level 2 — modals, menus */
+  --tv-bg-subtle: #242428;      /* Level 3 — hover states, inputs */
+  --tv-bg-highest: #2a2a2f;     /* Level 4 — tooltips, popovers */
+  --tv-bg-glass: rgba(22, 22, 24, 0.72);
+  --tv-glass-blur: 20px;
+
+  /* ── Accent — Blue ───────────────────────────────────────────────────────── */
+  --tv-accent-primary: #436fd9;
+  --tv-accent-hover: #3158c2;
+  --tv-accent-subtle: rgba(67, 111, 217, 0.12);
+  --tv-accent-border: rgba(67, 111, 217, 0.28);
+  --tv-accent-ring: rgba(67, 111, 217, 0.14);
+  /* M3 on-primary: color used for text/icons placed ON the accent bg */
+  --tv-accent-on: #ffffff;
+  /* M3 primary container: muted accent bg for secondary-emphasis elements */
+  --tv-accent-container: rgba(67, 111, 217, 0.18);
+  --tv-accent-on-container: #a5c2ff;
+
+  /* ── Material 3 State Layers ─────────────────────────────────────────────
+     Applied as ::before / ::after pseudo-elements at defined opacity.
+     All interactive elements use these — never custom hover colours.
+     Values are opacity scalars used in rgba(255,255,255, N).              */
+  --tv-state-hover: 0.06;     /* 6% white overlay on hover */
+  --tv-state-pressed: 0.10;   /* 10% white overlay on press */
+  --tv-state-focused: 0.10;   /* 10% white overlay + focus ring */
+  --tv-state-dragged: 0.14;   /* 14% white overlay while dragging */
+  --tv-state-selected: 0.12;  /* 12% accent overlay when selected */
+
+  /* ── Text ─────────────────────────────────────────────────────────────────── */
+  --tv-text-primary: #f4f4f5;
+  --tv-text-secondary: #a1a1aa;
+  --tv-text-disabled: #52525b;
+  --tv-text-inverse: #09090b;
+
+  /* ── Borders ──────────────────────────────────────────────────────────────── */
+  --tv-border-subtle: rgba(255, 255, 255, 0.06);
+  --tv-border-default: rgba(255, 255, 255, 0.1);
+  --tv-border-strong: rgba(255, 255, 255, 0.18);
+
+  /* ── Status ───────────────────────────────────────────────────────────────── */
+  --tv-success: #22c55e;
+  --tv-success-container: rgba(34, 197, 94, 0.14);
+  --tv-warning: #f59e0b;
+  --tv-warning-container: rgba(245, 158, 11, 0.14);
+  --tv-error: #ef4444;
+  --tv-error-container: rgba(239, 68, 68, 0.14);
+  --tv-info: #3b82f6;
+  --tv-info-container: rgba(59, 130, 246, 0.14);
+
+  /* ── Radius (M3 shape scale) ────────────────────────────────────────────── */
+  --tv-radius-xs: 4px;       /* chips, tags */
+  --tv-radius-sm: 6px;       /* buttons, inputs */
+  --tv-radius-md: 10px;      /* cards, file items */
+  --tv-radius-lg: 14px;      /* modals, panels */
+  --tv-radius-xl: 20px;      /* search overlay, onboarding */
+  --tv-radius-full: 9999px;  /* pills, FABs */
+
+  /* ── Spacing (base 4px) ───────────────────────────────────────────────────── */
+  --tv-space-1: 4px;
+  --tv-space-2: 8px;
+  --tv-space-3: 12px;
+  --tv-space-4: 16px;
+  --tv-space-5: 20px;
+  --tv-space-6: 24px;
+
+  /* ── Motion ───────────────────────────────────────────────────────────────── */
+  --tv-duration-fast: 120ms;
+  --tv-duration-base: 200ms;
+  --tv-duration-slow: 350ms;
+  --tv-easing-default: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── Typography ───────────────────────────────────────────────────────────── */
+  --tv-font-sans: "Geist", -apple-system, BlinkMacSystemFont, sans-serif;
+  --tv-font-mono: "Geist Mono", monospace;
+  --tv-font-size-xs: 11px;
+  --tv-font-size-sm: 13px;
+  --tv-font-size-base: 14px;
+  --tv-font-size-md: 15px;
+  --tv-font-size-lg: 18px;
+  --tv-font-size-xl: 22px;
+
+  /* ── Type Scale Roles (M3-inspired) ─────────────────────────────────────────
+     Components reference roles, not raw sizes. font shorthand sets
+     weight, size, line-height, and family in one declaration.            */
+  --tv-type-display:   700 22px/1.2 var(--tv-font-sans);   /* page titles, hero */
+  --tv-type-headline:  600 18px/1.3 var(--tv-font-sans);   /* modal titles, section headers */
+  --tv-type-title-lg:  600 15px/1.4 var(--tv-font-sans);   /* card titles, panel headers */
+  --tv-type-title-sm:  500 13px/1.4 var(--tv-font-sans);   /* sidebar section labels */
+  --tv-type-body:      400 14px/1.5 var(--tv-font-sans);   /* main content text */
+  --tv-type-body-sm:   400 13px/1.5 var(--tv-font-sans);   /* secondary content */
+  --tv-type-label:     500 12px/1.4 var(--tv-font-sans);   /* badges, tags, overlines */
+  --tv-type-label-sm:  500 11px/1.3 var(--tv-font-sans);   /* captions, timestamps */
+  --tv-type-mono:      400 13px/1.5 var(--tv-font-mono);   /* hashes, slugs, code */
+
+  /* ── Layout ───────────────────────────────────────────────────────────────── */
+  --tv-sidebar-width: 240px;
+  --tv-sidebar-min-width: 180px;
+  --tv-sidebar-max-width: 400px;
+  --tv-navbar-height: 48px;
+
+  /* ── Tonal Elevation (M3-inspired) ──────────────────────────────────────────
+     Applied as a background-image gradient over the base surface color.
+     Drop shadows are reserved for floating elements only.                */
+  --tv-elevation-0: transparent;                      /* base — no tint */
+  --tv-elevation-1: rgba(67, 111, 217, 0.05);         /* cards at rest */
+  --tv-elevation-2: rgba(67, 111, 217, 0.08);         /* dropdowns, popovers */
+  --tv-elevation-3: rgba(67, 111, 217, 0.11);         /* modals, dialogs */
+  --tv-elevation-4: rgba(67, 111, 217, 0.12);         /* TransfersTray */
+  --tv-elevation-5: rgba(67, 111, 217, 0.14);         /* command palette */
+
+  /* Drop shadows — used sparingly, only for floating layers */
+  --tv-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --tv-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35), 0 2px 4px rgba(0, 0, 0, 0.2);
+  --tv-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4), 0 4px 8px rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --tv-duration-fast: 0ms;
+    --tv-duration-base: 0ms;
+    --tv-duration-slow: 0ms;
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "id": "default",
+  "name": "Default Dark",
+  "description": "The built-in dark theme",
+  "preview": "#0d0d0f",
+  "hasComponentOverrides": false
+}

@@ -1,0 +1,62 @@
+import { create } from "zustand";
+
+export type UploadStatus = "hashing" | "uploading" | "complete" | "error" | "cancelled";
+
+export interface UploadState {
+  id: string; // Stable key for React UI
+  operationId: string;
+  fileName: string;
+  fileSize: number;
+  progress: number; // 0–100
+  status: UploadStatus;
+  error?: string;
+  folderId?: string;
+}
+
+interface UploadStore {
+  uploads: Map<string, UploadState>;
+  addUpload: (upload: UploadState) => void;
+  promoteUpload: (tempId: string, realId: string) => void;
+  updateProgress: (operationId: string, progress: number) => void;
+  setStatus: (operationId: string, status: UploadStatus, error?: string) => void;
+  removeUpload: (operationId: string) => void;
+}
+
+export const useUploadStore = create<UploadStore>()((set, get) => ({
+  uploads: new Map(),
+  addUpload: (upload) => {
+    const next = new Map(get().uploads);
+    next.set(upload.operationId, upload);
+    set({ uploads: next });
+  },
+  promoteUpload: (tempId, realId) => {
+    const next = new Map(get().uploads);
+    const existing = next.get(tempId);
+    if (existing) {
+      next.delete(tempId);
+      next.set(realId, { ...existing, operationId: realId });
+    }
+    set({ uploads: next });
+  },
+  updateProgress: (operationId, progress) => {
+    const next = new Map(get().uploads);
+    const existing = next.get(operationId);
+    if (existing) {
+      next.set(operationId, { ...existing, progress });
+      set({ uploads: next });
+    }
+  },
+  setStatus: (operationId, status, error) => {
+    const next = new Map(get().uploads);
+    const existing = next.get(operationId);
+    if (existing) {
+      next.set(operationId, { ...existing, status, error });
+      set({ uploads: next });
+    }
+  },
+  removeUpload: (operationId) => {
+    const next = new Map(get().uploads);
+    next.delete(operationId);
+    set({ uploads: next });
+  },
+}));

@@ -1,0 +1,39 @@
+services:
+  backend:
+    container_name: televault-backend
+    build: ./backend
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - icons_data:/app/static/icons
+
+  frontend:
+    container_name: televault-frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        VITE_THEME: ${VITE_THEME:-default}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - backend
+
+  db:
+    container_name: televault-postgres
+    image: postgres:16-alpine
+    env_file: .env
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --quiet -U \"${POSTGRES_USER:-postgres}\" -d \"${POSTGRES_DB:-televault}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  db_data:
+  icons_data:
