@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.3] - 2026-03-20
 
+### Added
+
+- Sequential file uploading: files are now uploaded one by one to prevent client/server overload and improve reliability
+- New "Queued" status for uploads waiting in the transfer manager
+- Early access warning modal that appearing on first login to inform about the development status
+
 ### Changed
 
 - Restricted backend Docker container access to the internal network; access is now only possible through the frontend proxy
