@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.4] - 2026-03-20
+
+### Fixed
+
+- `tokens.css` failing to load in production with MIME type mismatch (`text/html` instead of JavaScript): replaced `/* @vite-ignore */` dynamic import with `import.meta.glob` so Vite bundles all theme token files at build time instead of attempting a runtime path fetch that nginx could not resolve
+- SSE event stream (`/api/v1/events/stream`) repeatedly failing with `ERR_QUIC_PROTOCOL_ERROR`: added `Alt-Svc: none` response header to the nginx SSE location blocks to prevent browsers from upgrading the long-lived connection to HTTP/3 (QUIC), which is incompatible with chunked SSE streams
+
 ## [1.0.3] - 2026-03-20
 
 ### Added
@@ -59,7 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VITE_THEME` build argument for UI theme selection
 - `ADMIN_TELEGRAM_ID` environment variable for automatic admin promotion on first login
 
-[Unreleased]: https://github.com/elpideus/TeleVault/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/elpideus/TeleVault/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/elpideus/TeleVault/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/elpideus/TeleVault/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/elpideus/TeleVault/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/elpideus/TeleVault/compare/v1.0.0...v1.0.1
