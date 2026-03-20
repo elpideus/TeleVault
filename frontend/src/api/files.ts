@@ -107,10 +107,10 @@ export async function uploadFile(
   folderSlug: string | null,
   onProgress?: (operationId: string) => void,
   onHashProgress?: (progress: number) => void,
+  onUploadProgress?: (progress: number) => void,
 ) {
   const token = getToken();
   const baseUrl = getBaseUrl();
-  const url = `${baseUrl}/api/v1/files/upload`;
 
   // 1. Compute Hash via Worker
   const hash = await new Promise<string>((resolve, reject) => {
@@ -133,6 +133,30 @@ export async function uploadFile(
     worker.postMessage(file);
   });
 
+  // 2. Pre-check for duplicate before uploading the full file
+  const checkRes = await fetch(`${baseUrl}/api/v1/files/check-hash`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ file_hash: hash }),
+  });
+  if (!checkRes.ok) {
+    let errMsg = "Duplicate check failed";
+    try {
+      const raw = await checkRes.text();
+      try {
+        const errBody = JSON.parse(raw);
+        errMsg = errBody.detail?.message || errBody.detail || JSON.stringify(errBody);
+      } catch {
+        errMsg = raw;
+      }
+    } catch { /* ignore */ }
+    throw new Error(`Upload failed: ${checkRes.status} ${errMsg}`);
+  }
+
+  // 3. Upload via XHR to get HTTP-level upload progress events
   const form = new FormData();
   form.append("file", file);
   form.append("filename", file.name);
@@ -140,22 +164,43 @@ export async function uploadFile(
     form.append("folder_slug", folderSlug);
   }
   form.append("file_hash", hash);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
+
+  const data = await new Promise<{ operation_id: string }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${baseUrl}/api/v1/files/upload`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onUploadProgress?.(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          reject(new Error("Invalid response from server"));
+        }
+      } else {
+        let errMsg = "Upload failed";
+        try {
+          const errBody = JSON.parse(xhr.responseText);
+          errMsg = errBody.detail?.message || errBody.detail || JSON.stringify(errBody);
+        } catch {
+          errMsg = xhr.responseText || errMsg;
+        }
+        reject(new Error(`Upload failed: ${xhr.status} ${errMsg}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.ontimeout = () => reject(new Error("Upload timed out"));
+
+    xhr.send(form);
   });
-  if (!res.ok) {
-    let errMsg = "Upload failed";
-    try {
-      const errBody = await res.json();
-      errMsg = errBody.detail?.message || errBody.detail || JSON.stringify(errBody);
-    } catch {
-      errMsg = await res.text();
-    }
-    throw new Error(`Upload failed: ${res.status} ${errMsg}`);
-  }
-  const data = await res.json() as { operation_id: string };
+
   onProgress?.(data.operation_id);
   return data;
 }

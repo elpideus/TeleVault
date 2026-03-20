@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.3] - 2026-03-20
+
+### Changed
+
+- Restricted backend Docker container access to the internal network; access is now only possible through the frontend proxy
+- Updated project documentation with safety warnings and Docker update instructions
+- Aligned version numbers across frontend and backend
+
 ## [1.0.2] - 2026-03-20
 
 ### Fixed
@@ -45,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VITE_THEME` build argument for UI theme selection
 - `ADMIN_TELEGRAM_ID` environment variable for automatic admin promotion on first login
 
-[Unreleased]: https://github.com/elpideus/TeleVault/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/elpideus/TeleVault/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/elpideus/TeleVault/compare/v1.0.2...v1.0.3
+[1.0.2]: https://github.com/elpideus/TeleVault/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/elpideus/TeleVault/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/elpideus/TeleVault/releases/tag/v1.0.0

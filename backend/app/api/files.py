@@ -6,6 +6,9 @@ import uuid
 from typing import Optional
 from urllib.parse import quote
 
+# Keep strong references to background upload tasks so the GC cannot cancel them.
+_background_tasks: set[asyncio.Task] = set()
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -248,7 +251,9 @@ async def upload_file(
 
     # Kick off Telegram upload as a background task so this response is
     # delivered to the client before any progress events are emitted.
-    asyncio.create_task(upload_svc.execute_upload(
+    # Store a strong reference in _background_tasks so the GC cannot cancel
+    # the task mid-upload (critical for multi-GB files that run for minutes).
+    task = asyncio.create_task(upload_svc.execute_upload(
         registry=operation_registry,
         pool=pool,
         operation_id=operation_id,
@@ -262,6 +267,8 @@ async def upload_file(
         file_hash=file_hash,
         tmp_path=tmp_path,
     ))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
     return FileUploadOut(
         operation_id=operation_id,

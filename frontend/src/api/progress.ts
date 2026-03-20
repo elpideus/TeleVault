@@ -10,3 +10,4 @@ export function createProgressSource(
     `${import.meta.env.VITE_API_BASE_URL}/api/v1/progress/${operationId}?token=${encodeURIComponent(token)}`,
   );
 }
+

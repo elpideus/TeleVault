@@ -1,4 +1,8 @@
 import { useState, useCallback, useMemo, useRef } from "react";
+
+// Module-level serial queue — ensures all uploads across any number of
+// handleDrop calls are processed one at a time globally.
+let _uploadQueue: Promise<void> = Promise.resolve();
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -235,48 +239,79 @@ export function FileExplorer() {
   const handleDrop = useCallback(
     (files: File[]) => {
       if (!user) return;
+
       const { addUpload, updateProgress, setStatus, promoteUpload } = useUploadStore.getState();
 
-      files.forEach((file) => {
-        const tempId = `hashing-${generateUUID()}`;
-        
-        // 1. Add to store immediately as "hashing"
+      // Add ALL files to the store immediately as "queued"
+      const fileEntries = files.map((file) => ({
+        file,
+        tempId: `upload-${generateUUID()}`,
+        stableId: generateUUID(),
+      }));
+
+      for (const { file, tempId, stableId } of fileEntries) {
         addUpload({
-          id: generateUUID(),
+          id: stableId,
           operationId: tempId,
           fileName: file.name,
           fileSize: file.size,
           progress: 0,
-          status: "hashing",
+          status: "queued",
           folderId: slug || undefined,
         });
+      }
 
-        uploadFile(
-          file, 
-          isRoot ? null : slug, 
-          (operationId) => {
-            // 2. When upload starts (got real operationId), promote it
-            promoteUpload(tempId, operationId);
-            setStatus(operationId, "uploading");
-          },
-          (progress) => {
-            // Update hashing progress
-            updateProgress(tempId, progress);
-          }
-        )
-          .then(() => {
+      // Chain onto the global queue so uploads from concurrent handleDrop calls
+      // (e.g. drag + button) never run in parallel.
+      _uploadQueue = _uploadQueue.then(async () => {
+        for (const { file, tempId } of fileEntries) {
+          setStatus(tempId, "hashing");
+
+          let realOperationId: string | null = null;
+          try {
+            await uploadFile(
+              file,
+              isRoot ? null : slug,
+              (operationId) => {
+                realOperationId = operationId;
+                promoteUpload(tempId, operationId);
+                setStatus(operationId, "processing");
+              },
+              (progress) => updateProgress(tempId, progress),
+              (progress) => {
+                setStatus(tempId, "uploading");
+                updateProgress(tempId, progress);
+              },
+            );
+
+            // Wait for the server-to-Telegram phase before starting the next
+            // file. Check current state first to avoid a race where the SSE
+            // "done" event already arrived before we subscribe.
+            if (realOperationId) {
+              const opId = realOperationId;
+              await new Promise<void>((resolve, reject) => {
+                // Immediate check — may already be terminal
+                const current = useUploadStore.getState().uploads.get(opId);
+                if (!current || current.status === "complete") return resolve();
+                if (current.status === "error") return reject(new Error(current.error ?? "Upload failed"));
+
+                const unsub = useUploadStore.subscribe((state) => {
+                  const u = state.uploads.get(opId);
+                  if (!u || u.status === "complete") { unsub(); resolve(); }
+                  else if (u.status === "error") { unsub(); reject(new Error(u.error ?? "Upload failed")); }
+                });
+              });
+            }
+
             void queryClient.invalidateQueries({ queryKey: fileKeys.all });
             toast.success(`Uploaded ${file.name}`);
-          })
-          .catch((err) => {
+          } catch (err: any) {
             console.error("Upload failed:", err);
-            // If it failed during hashing, it might still have the tempId
-            const currentUploads = useUploadStore.getState().uploads;
-            const opId = currentUploads.has(tempId) ? tempId : Array.from(currentUploads.values()).find(u => u.fileName === file.name && u.status === "uploading")?.operationId || tempId;
-            
-            setStatus(opId, "error", err.message);
-            toast.error(`Failed to upload ${file.name}`);
-          });
+            const opId = realOperationId ?? tempId;
+            setStatus(opId, "error", (err as Error).message);
+            toast.error(`Failed to upload ${file.name}: ${(err as Error).message}`);
+          }
+        }
       });
     },
     [slug, isRoot, user, queryClient],

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type UploadStatus = "hashing" | "uploading" | "complete" | "error" | "cancelled";
+export type UploadStatus = "queued" | "hashing" | "uploading" | "processing" | "complete" | "error" | "cancelled";
 
 export interface UploadState {
   id: string; // Stable key for React UI

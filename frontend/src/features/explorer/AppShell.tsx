@@ -36,6 +36,7 @@ import {
   FilePropertiesModal,
   FolderPropertiesModal,
   DisclaimerModal,
+  EarlyAccessWarningModal,
   DonationModal,
 } from "../../themes/index";
 import { useAuthStore } from "../../store/authStore";
@@ -47,7 +48,7 @@ const SIDEBAR_PANEL_ID = "sidebar";
 
 export function AppShell() {
   const shouldReduceMotion = useReducedMotion();
-  const { sidebarWidth, setSidebarWidth, setSearchOpen, setCommandPaletteOpen, settingsOpen, setSettingsOpen, hasSeenDisclaimer, setHasSeenDisclaimer, hasSeenDonationModal, setHasSeenDonationModal } = useUIStore();
+  const { sidebarWidth, setSidebarWidth, setSearchOpen, setCommandPaletteOpen, settingsOpen, setSettingsOpen, hasSeenDisclaimer, setHasSeenDisclaimer, hasSeenEarlyAccessWarning, setHasSeenEarlyAccessWarning, hasSeenDonationModal, setHasSeenDonationModal } = useUIStore();
   const { isAuthenticated } = useAuthStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
@@ -296,6 +297,13 @@ export function AppShell() {
       )}
 
       {isAuthenticated && hasSeenDisclaimer && (
+        <EarlyAccessWarningModal
+          open={!hasSeenEarlyAccessWarning}
+          onConfirm={() => setHasSeenEarlyAccessWarning(true)}
+        />
+      )}
+
+      {isAuthenticated && hasSeenDisclaimer && hasSeenEarlyAccessWarning && (
         <DonationModal
           open={!hasSeenDonationModal}
           onConfirm={() => setHasSeenDonationModal(true)}
