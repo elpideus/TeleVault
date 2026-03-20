@@ -22,6 +22,8 @@ export function useUploadSSE(operationId: string, token: string) {
   const upload = uploads.get(operationId);
   const isTerminal =
     !upload ||
+    upload.status === "queued" ||
+    upload.status === "hashing" ||
     upload.status === "complete" ||
     upload.status === "error" ||
     upload.status === "cancelled";
@@ -30,7 +32,7 @@ export function useUploadSSE(operationId: string, token: string) {
     // Temp placeholder IDs (prefixed "temp-") are used while the file is
     // still being uploaded to the server. The real operation ID isn't known
     // yet, so there's nothing to connect to — skip SSE for these.
-    if (!operationId || operationId.startsWith("temp-") || operationId.startsWith("hashing-") || !token || isTerminal) return;
+    if (!operationId || operationId.startsWith("temp-") || operationId.startsWith("hashing-") || operationId.startsWith("upload-") || !token || isTerminal) return;
 
     const source = createProgressSource(operationId, token);
     sourceRef.current = source;

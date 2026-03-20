@@ -109,8 +109,8 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
       <div className="relative flex items-center gap-2 min-w-0">
         {/* Leading icon */}
         <div className="flex-shrink-0 text-[var(--tv-text-secondary)]">
-          {status === "uploading" || status === "hashing" ? (
-            <ArrowUpload20Regular style={{ color: "var(--tv-accent-primary)" }} />
+          {status === "uploading" || status === "processing" || status === "hashing" || status === "queued" ? (
+            <ArrowUpload20Regular style={{ color: status === "queued" ? "var(--tv-text-disabled)" : "var(--tv-accent-primary)" }} />
           ) : (
             STATUS_ICON_MAP[status as keyof typeof STATUS_ICON_MAP]
           )}
@@ -135,6 +135,11 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
             }}
           >
             {formatBytes(fileSize)}
+            {status === "queued" && (
+              <span style={{ color: "var(--tv-text-disabled)", marginLeft: 6 }}>
+                Queued
+              </span>
+            )}
             {status === "hashing" && (
               <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>
                 Hashing {Math.round(progress)}%
@@ -142,7 +147,12 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
             )}
             {status === "uploading" && (
               <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>
-                {Math.round(progress)}%
+                Uploading (TeleVault)... {Math.round(progress)}%
+              </span>
+            )}
+            {status === "processing" && (
+              <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>
+                Uploading (Telegram)... {Math.round(progress)}%
               </span>
             )}
             {status === "error" && error && (
@@ -206,7 +216,7 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
 
       {/* ── Progress bar ────────────────────────────────────────────────── */}
       <AnimatePresence>
-        {(status === "uploading" || status === "hashing") && (
+        {(status === "uploading" || status === "processing" || status === "hashing" || status === "queued") && (
           <motion.div
             key="progress-track"
             initial={shouldReduceMotion ? {} : { opacity: 0 }}
@@ -218,8 +228,8 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
           >
             <motion.div
               className="absolute inset-y-0 left-0 rounded-full"
-              style={{ background: "var(--tv-accent-primary)", width: "0%" }}
-              animate={{ width: `${progress}%` }}
+              style={{ background: status === "queued" ? "var(--tv-text-disabled)" : "var(--tv-accent-primary)", width: status === "queued" ? "0%" : undefined }}
+              animate={{ width: status === "queued" ? "0%" : `${progress}%` }}
               transition={progressTransition}
             />
           </motion.div>

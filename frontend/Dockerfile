@@ -21,6 +21,9 @@ RUN npm run build
 # Stage 2: Serve
 FROM nginx:stable-alpine
 
+# Limit worker_processes to 1
+RUN sed -i 's/worker_processes.*/worker_processes 1;/g' /etc/nginx/nginx.conf
+
 # Copy build output to Nginx's serve directory
 COPY --from=build /app/dist /usr/share/nginx/html
 

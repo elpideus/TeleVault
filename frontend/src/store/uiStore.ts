@@ -33,6 +33,8 @@ interface UIStore {
   setSettingsOpen: (open: boolean) => void;
   hasSeenDisclaimer: boolean;
   setHasSeenDisclaimer: (value: boolean) => void;
+  hasSeenEarlyAccessWarning: boolean;
+  setHasSeenEarlyAccessWarning: (value: boolean) => void;
   hasSeenDonationModal: boolean;
   setHasSeenDonationModal: (value: boolean) => void;
   resetOnboarding: () => void;
@@ -75,11 +77,15 @@ export const useUIStore = create<UIStore>()(
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       hasSeenDisclaimer: false,
       setHasSeenDisclaimer: (value) => set({ hasSeenDisclaimer: value }),
+      hasSeenEarlyAccessWarning: false,
+      setHasSeenEarlyAccessWarning: (value) =>
+        set({ hasSeenEarlyAccessWarning: value }),
       hasSeenDonationModal: false,
       setHasSeenDonationModal: (value) => set({ hasSeenDonationModal: value }),
       resetOnboarding: () =>
         set({
           hasSeenDisclaimer: false,
+          hasSeenEarlyAccessWarning: false,
           hasSeenDonationModal: false,
         }),
     }),
@@ -91,6 +97,7 @@ export const useUIStore = create<UIStore>()(
         folderSortPrefs: s.folderSortPrefs,
         visibleColumns: s.visibleColumns,
         hasSeenDisclaimer: s.hasSeenDisclaimer,
+        hasSeenEarlyAccessWarning: s.hasSeenEarlyAccessWarning,
         hasSeenDonationModal: s.hasSeenDonationModal,
       }),
     },

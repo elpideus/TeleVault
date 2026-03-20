@@ -44,7 +44,8 @@ RUN apt-get update \
         postgresql-16 \
         postgresql-client-16 \
     && rm -rf /var/lib/apt/lists/* /etc/nginx/sites-enabled/default \
-    && rm -rf /var/lib/postgresql/16/main
+    && rm -rf /var/lib/postgresql/16/main \
+    && sed -i 's/worker_processes.*/worker_processes 1;/g' /etc/nginx/nginx.conf
 
 # Copy virtualenv from builder
 COPY --from=backend-build /opt/venv /opt/venv

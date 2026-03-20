@@ -18,6 +18,8 @@
 **TeleVault** is a self-hosted, open-source cloud storage platform that uses Telegram as its storage backend. 📤 Upload, organize, and manage your files through a clean, modern web interface — all stored securely and privately in your own Telegram account. 🛡️
 
 > [!WARNING]
+> **TeleVault is currently under active development.** 🛠️ While we strive for stability, this software is in an alpha/beta state and could potentially contain bugs that might impact your data or files. **Always maintain independent backups of important data.** Use at your own risk. 🚨
+>
 > **Use Responsibly.** ⚠️ TeleVault is designed for personal file storage and organization. Telegram's infrastructure is a shared resource — please avoid mass-hoarding, automated bulk transfers, or any usage patterns that could violate [Telegram's Terms of Service](https://telegram.org/tos). Irresponsible use puts your account at risk of suspension and burdens Telegram's platform for everyone. Use this tool as you would any personal cloud storage service: for your own files, at a human scale. ⚖️
 
 ---
@@ -128,11 +130,43 @@ FRONTEND_PORT=5173
 docker compose up -d
 ```
 
-Database migrations run automatically on backend startup. Once all containers are healthy, open your browser at:
+### 🆙 Updating TeleVault
 
-```
-http://localhost:5173
-```
+To update your installation to the latest version, follow these steps:
+
+**Using Docker Compose:**
+
+1. Pull the latest images:
+   ```bash
+   docker compose pull
+   ```
+
+2. Restart the containers:
+   ```bash
+   docker compose up -d
+   ```
+
+3. (Optional) Remove old, unused images:
+   ```bash
+   docker image prune -f
+   ```
+
+**Using the All-in-One image:**
+
+1. Stop and remove the existing container:
+   ```bash
+   docker stop televault
+   docker rm televault
+   ```
+
+2. Pull the latest image:
+   ```bash
+   docker pull ghcr.io/elpideus/televault:latest
+   ```
+
+3. Run the new container with your previous environment variables and volumes.
+
+---
 
 #### Alternative: single all-in-one container
 
@@ -196,22 +230,7 @@ Use your Telegram phone number. You will receive a one-time code via Telegram to
 ```
 TeleVault/
 ├── backend/                # ⚙️ FastAPI application
-│   ├── app/
-│   │   ├── api/            # Route handlers
-│   │   ├── core/           # Config, auth, encryption
-│   │   ├── db/             # SQLAlchemy models & session
-│   │   ├── services/       # Business logic
-│   │   ├── schemas/        # Pydantic schemas
-│   │   └── telegram/       # Telethon client management
-│   └── alembic/            # Database migrations
-│
 ├── frontend/               # 🎨 React + TypeScript SPA
-│   └── src/
-│       ├── api/            # Generated API client
-│       ├── features/       # Auth & file explorer UI
-│       ├── store/          # Zustand state stores
-│       └── hooks/          # Custom React hooks
-│
 └── docker-compose.yml      # 🐳 Service orchestration
 ```
 

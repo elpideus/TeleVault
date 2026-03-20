@@ -141,6 +141,7 @@ export { ConfirmModal } from "./default/components/ConfirmModal";
 export type { ConfirmModalProps } from "./default/components/ConfirmModal";
 
 export { DisclaimerModal } from "./default/components/DisclaimerModal";
+export { EarlyAccessWarningModal } from "./default/components/EarlyAccessWarningModal";
 
 export { DonationModal } from "./default/components/DonationModal";
 
