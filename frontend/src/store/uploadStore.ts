@@ -5,6 +5,7 @@ export type UploadStatus = "queued" | "hashing" | "uploading" | "processing" | "
 export interface UploadState {
   id: string; // Stable key for React UI
   operationId: string;
+  fileId?: string; // Real file ID from backend (set after XHR upload)
   fileName: string;
   fileSize: number;
   progress: number; // 0–100
@@ -16,7 +17,7 @@ export interface UploadState {
 interface UploadStore {
   uploads: Map<string, UploadState>;
   addUpload: (upload: UploadState) => void;
-  promoteUpload: (tempId: string, realId: string) => void;
+  promoteUpload: (tempId: string, realId: string, fileId?: string) => void;
   updateProgress: (operationId: string, progress: number) => void;
   setStatus: (operationId: string, status: UploadStatus, error?: string) => void;
   removeUpload: (operationId: string) => void;
@@ -29,12 +30,12 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
     next.set(upload.operationId, upload);
     set({ uploads: next });
   },
-  promoteUpload: (tempId, realId) => {
+  promoteUpload: (tempId, realId, fileId) => {
     const next = new Map(get().uploads);
     const existing = next.get(tempId);
     if (existing) {
       next.delete(tempId);
-      next.set(realId, { ...existing, operationId: realId });
+      next.set(realId, { ...existing, operationId: realId, fileId });
     }
     set({ uploads: next });
   },
