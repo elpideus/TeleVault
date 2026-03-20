@@ -1,0 +1,144 @@
+@import "tailwindcss";
+@import "./themes/default/tokens.css";
+
+/* ── Geist font face declarations ────────────────────────────────────────── */
+@font-face {
+  font-family: "Geist";
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/Geist-Variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
+}
+
+/* ── Global resets ────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font: var(--tv-type-body);
+  background: var(--tv-bg-base);
+  color: var(--tv-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Focus ring ───────────────────────────────────────────────────────────── */
+:focus-visible:not(input, textarea, [role="combobox"]) {
+  outline: 2px solid var(--tv-accent-ring);
+  outline-offset: 0px;
+}
+
+/* ── Tooltip animations ───────────────────────────────────────────────────── */
+@keyframes tv-tooltip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tv-tooltip-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--tv-border-strong);
+  border-radius: var(--tv-radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--tv-text-disabled);
+}
+
+/* ── Context Menu animations ──────────────────────────────────────────────── */
+@keyframes tv-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tv-menu-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* ── Sonner Toast Overrides ──────────────────────────────────────────────── */
+[data-sonner-toast] [data-close-button] {
+  left: auto !important;
+  right: var(--tv-space-2) !important;
+  top: var(--tv-space-2) !important;
+  transform: none !important;
+  background: transparent !important;
+  border: none !important;
+  color: var(--tv-text-secondary) !important;
+  border-radius: var(--tv-radius-sm) !important;
+  width: 24px !important;
+  height: 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all var(--tv-duration-fast) var(--tv-easing-default) !important;
+}
+
+[data-sonner-toast] [data-close-button]:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: var(--tv-text-primary) !important;
+}
+
+[data-sonner-toast] [data-close-button] svg {
+  width: 14px !important;
+  height: 14px !important;
+}

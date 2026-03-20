@@ -1,0 +1,21 @@
+# Environment
+.env
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Runtime
+*.log
