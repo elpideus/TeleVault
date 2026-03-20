@@ -42,12 +42,17 @@ async def stream_progress(
     operation_id: str,
     current_user: User = Depends(_get_sse_user),
 ) -> StreamingResponse:
-    if operation_id not in operation_registry._queues:
+    if not operation_registry.has_operation(operation_id):
         raise HTTPException(status_code=404, detail="Operation not found")
 
     async def event_generator() -> AsyncGenerator[str, None]:
         async for event in operation_registry.stream(operation_id):
-            yield f"data: {json.dumps(asdict(event))}\n\n"
+            if event.status == "ping":
+                # SSE comment — keeps QUIC/proxy connections alive without
+                # triggering onmessage in the browser.
+                yield ": ping\n\n"
+            else:
+                yield f"data: {json.dumps(asdict(event))}\n\n"
 
     return StreamingResponse(
         event_generator(),

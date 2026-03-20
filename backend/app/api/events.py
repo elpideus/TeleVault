@@ -46,8 +46,22 @@ async def stream_events(
 
     async def generator() -> AsyncGenerator[str, None]:
         yield "data: connected\n\n"
-        async for _ in event_broadcaster.stream(current_user.telegram_id):
-            yield "data: update\n\n"
+        # Subscribe directly so we can use asyncio.wait_for for heartbeats.
+        q: asyncio.Queue[None] = asyncio.Queue(maxsize=32)
+        event_broadcaster._listeners.setdefault(current_user.telegram_id, set()).add(q)
+        try:
+            while True:
+                try:
+                    await asyncio.wait_for(q.get(), timeout=20.0)
+                    yield "data: update\n\n"
+                except asyncio.TimeoutError:
+                    # SSE comment keeps QUIC/proxy alive when no events flow.
+                    yield ": ping\n\n"
+        finally:
+            listeners = event_broadcaster._listeners.get(current_user.telegram_id, set())
+            listeners.discard(q)
+            if not listeners:
+                event_broadcaster._listeners.pop(current_user.telegram_id, None)
 
     return StreamingResponse(
         generator(),

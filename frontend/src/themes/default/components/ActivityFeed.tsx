@@ -194,14 +194,42 @@ export function ActivityFeed() {
   });
   const events: EventOut[] = data?.items ?? [];
 
-  // Real-time updates via SSE — refetch whenever the backend emits a new event
+  // Real-time updates via SSE — refetch whenever the backend emits a new event.
+  // Uses exponential backoff on connection errors to avoid hammering the server
+  // when the SSE transport fails (e.g. ERR_QUIC_PROTOCOL_ERROR).
   useEffect(() => {
     if (!token) return;
-    const source = createActivitySource(token);
-    source.onmessage = () => {
-      queryClient.invalidateQueries({ queryKey: eventKeys.all });
+    let source: EventSource | null = null;
+    let retryDelay = 2000; // start at 2 s
+    const MAX_DELAY = 60_000; // cap at 60 s
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    const connect = () => {
+      if (stopped) return;
+      source = createActivitySource(token);
+      source.onmessage = () => {
+        retryDelay = 2000; // reset on success
+        queryClient.invalidateQueries({ queryKey: eventKeys.all });
+      };
+      source.onerror = () => {
+        source?.close();
+        source = null;
+        if (stopped) return;
+        // Exponential backoff — prevents QUIC-error console spam
+        timeoutId = setTimeout(() => {
+          retryDelay = Math.min(retryDelay * 2, MAX_DELAY);
+          connect();
+        }, retryDelay);
+      };
     };
-    return () => source.close();
+
+    connect();
+    return () => {
+      stopped = true;
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      source?.close();
+    };
   }, [token, queryClient]);
 
   return (

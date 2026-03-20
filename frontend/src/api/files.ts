@@ -105,7 +105,7 @@ export async function updateFile(fileId: string, data: { name?: string | null })
 export async function uploadFile(
   file: File,
   folderSlug: string | null,
-  onProgress?: (operationId: string) => void,
+  onProgress?: (operationId: string, fileId: string) => void,
   onHashProgress?: (progress: number) => void,
   onUploadProgress?: (progress: number) => void,
 ) {
@@ -165,7 +165,7 @@ export async function uploadFile(
   }
   form.append("file_hash", hash);
 
-  const data = await new Promise<{ operation_id: string }>((resolve, reject) => {
+  const data = await new Promise<{ operation_id: string; file_id: string }>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${baseUrl}/api/v1/files/upload`);
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
@@ -201,7 +201,7 @@ export async function uploadFile(
     xhr.send(form);
   });
 
-  onProgress?.(data.operation_id);
+  onProgress?.(data.operation_id, data.file_id);
   return data;
 }
 

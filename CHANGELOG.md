@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.5] - 2026-03-21
+
+### Fixed
+
+- Large file uploads stalling at the "Uploading to TeleVault" phase due to compounding SSE/QUIC issues:
+  - Rewrote `OperationRegistry` with a fan-out broadcast model so multiple SSE consumers (upload queue and transfers tray) each receive every progress event independently
+  - Added a 20-second SSE heartbeat (`ping` comment line) to both the progress and global events streams, preventing QUIC idle-timeout disconnects during long uploads
+  - Replaced immediate error-on-disconnect behaviour in `useUploadSSE` with exponential backoff (1 s → 16 s) so transient QUIC reconnects no longer mark uploads as failed
+  - Added a dedicated SSE connection owned by the upload queue in `FileExplorer`, making completion detection independent of whether the transfers tray UI is mounted
+  - Extended Nginx `client_body_timeout` from the default 60 s to 3600 s for the upload endpoint, preventing connection drops mid-stream on slow or large uploads
+  - Added `Alt-Svc: none` response headers to the progress SSE and file upload Nginx locations to prevent browsers from attempting HTTP/3 (QUIC) on those endpoints
+
+---
+
 ## [1.0.4] - 2026-03-20
 
 ### Fixed

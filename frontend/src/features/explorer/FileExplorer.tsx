@@ -14,6 +14,7 @@ import { useFolderBrowser } from "../../hooks/useFolderBrowser";
 import { useUploadStore } from "../../store/uploadStore";
 import { generateUUID } from "../../utils/uuid";
 import { uploadFile, fileKeys } from "../../api/files";
+import { createProgressSource } from "../../api/progress";
 import { useAuthStore } from "../../store/authStore";
 import { getBaseUrl } from "../../api/client";
 import { useExplorerStore } from "../../store/explorerStore";
@@ -272,9 +273,9 @@ export function FileExplorer() {
             await uploadFile(
               file,
               isRoot ? null : slug,
-              (operationId) => {
+              (operationId, fileId) => {
                 realOperationId = operationId;
-                promoteUpload(tempId, operationId);
+                promoteUpload(tempId, operationId, fileId);
                 setStatus(operationId, "processing");
               },
               (progress) => updateProgress(tempId, progress),
@@ -284,23 +285,86 @@ export function FileExplorer() {
               },
             );
 
-            // Wait for the server-to-Telegram phase before starting the next
-            // file. Check current state first to avoid a race where the SSE
-            // "done" event already arrived before we subscribe.
+            // Wait for the server-to-Telegram phase using a dedicated SSE
+            // connection owned by the queue — independent of whether the
+            // transfer tray is open and TransferItem is mounted.
             if (realOperationId) {
               const opId = realOperationId;
-              await new Promise<void>((resolve, reject) => {
-                // Immediate check — may already be terminal
-                const current = useUploadStore.getState().uploads.get(opId);
-                if (!current || current.status === "complete") return resolve();
-                if (current.status === "error") return reject(new Error(current.error ?? "Upload failed"));
 
-                const unsub = useUploadStore.subscribe((state) => {
-                  const u = state.uploads.get(opId);
-                  if (!u || u.status === "complete") { unsub(); resolve(); }
-                  else if (u.status === "error") { unsub(); reject(new Error(u.error ?? "Upload failed")); }
+              // Immediate check — SSE "done" may have already arrived.
+              const immediateState = useUploadStore.getState().uploads.get(opId);
+              if (immediateState?.status !== "complete") {
+                if (immediateState?.status === "error") {
+                  throw new Error(immediateState.error ?? "Upload failed");
+                }
+                await new Promise<void>((resolve, reject) => {
+                  const token = useAuthStore.getState().accessToken ?? "";
+                  let queueSource: EventSource | null = createProgressSource(opId, token);
+                  let queueRetries = 0;
+                  const MAX_QUEUE_RETRIES = 8;
+                  let queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
+                  let queueRetryDelay = 1000;
+                  let done = false;
+
+                  const cleanupQueue = (unsub?: () => void) => {
+                    done = true;
+                    if (queueRetryTimer !== null) clearTimeout(queueRetryTimer);
+                    queueSource?.close();
+                    queueSource = null;
+                    unsub?.();
+                  };
+
+                  // Watch the Zustand store too — TransferItem SSE may resolve first.
+                  const unsub = useUploadStore.subscribe((state) => {
+                    if (done) return;
+                    const u = state.uploads.get(opId);
+                    if (!u || u.status === "complete") { cleanupQueue(unsub); resolve(); }
+                    else if (u.status === "error") { cleanupQueue(unsub); reject(new Error(u.error ?? "Upload failed")); }
+                  });
+
+                  const attachQueueHandlers = (src: EventSource) => {
+                    const onMsg = (e: MessageEvent) => {
+                      try {
+                        const data = JSON.parse(e.data as string) as { pct?: number; status?: string; message?: string };
+                        if (typeof data.pct === "number") {
+                          updateProgress(opId, Math.min(100, Math.max(0, data.pct)));
+                        }
+                        if (data.status === "done" || data.status === "complete") {
+                          setStatus(opId, "complete");
+                          cleanupQueue(unsub);
+                          resolve();
+                        } else if (data.status === "error") {
+                          const msg = data.message ?? "Upload failed";
+                          setStatus(opId, "error", msg);
+                          cleanupQueue(unsub);
+                          reject(new Error(msg));
+                        }
+                      } catch { /* ignore malformed */ }
+                    };
+                    src.addEventListener("progress", onMsg);
+                    src.onmessage = onMsg;
+                    src.onerror = () => {
+                      src.close();
+                      if (done) return;
+                      queueRetries++;
+                      if (queueRetries > MAX_QUEUE_RETRIES) {
+                        setStatus(opId, "error", "Connection lost");
+                        cleanupQueue(unsub);
+                        reject(new Error("Connection lost"));
+                        return;
+                      }
+                      queueRetryTimer = setTimeout(() => {
+                        queueRetryDelay = Math.min(queueRetryDelay * 2, 16_000);
+                        if (!done) {
+                          queueSource = createProgressSource(opId, token);
+                          attachQueueHandlers(queueSource);
+                        }
+                      }, queueRetryDelay);
+                    };
+                  };
+                  attachQueueHandlers(queueSource);
                 });
-              });
+              }
             }
 
             void queryClient.invalidateQueries({ queryKey: fileKeys.all });
