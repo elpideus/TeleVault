@@ -58,6 +58,27 @@ async def list_alt_accounts(
     return list(result.scalars().all())
 
 
+# ─── Primary account ──────────────────────────────────────────────────────────
+
+@router.get("/primary", response_model=TelegramAltAccountOut)
+async def get_primary_account(
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the primary Telegram account for the current user."""
+    result = await session.execute(
+        select(TelegramAccount).where(
+            TelegramAccount.owner_telegram_id == current_user.telegram_id,
+            TelegramAccount.is_primary.is_(True),
+            TelegramAccount.is_active.is_(True),
+        )
+    )
+    ta = result.scalar_one_or_none()
+    if ta is None:
+        raise HTTPException(status_code=404, detail="Primary account not found")
+    return ta
+
+
 # ─── Add account: phone/OTP flow ─────────────────────────────────────────────
 
 @router.post("/add/phone", status_code=204)
