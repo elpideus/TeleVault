@@ -171,7 +171,6 @@ export async function uploadFile(
   }
 
   // 3. Choose upload strategy: direct (small) or chunked (large)
-  const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB chunks for better granularity
   const USE_CHUNKING = file.size > 50 * 1024 * 1024; // Use chunks for files > 50MB
 
   if (USE_CHUNKING) {
@@ -257,14 +256,15 @@ export async function uploadFile(
       }),
     });
     if (initRes.status !== 200) throw new Error(`Chunk initialization failed: ${initRes.status}`);
-    const { upload_id } = JSON.parse(initRes.body);
+    const { upload_id, chunk_size } = JSON.parse(initRes.body);
+    const FINAL_CHUNK_SIZE = chunk_size || 90 * 1024 * 1024;
 
     let totalUploadedPreviousChunks = 0;
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const totalChunks = Math.ceil(file.size / FINAL_CHUNK_SIZE);
 
     for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const start = i * FINAL_CHUNK_SIZE;
+        const end = Math.min(start + FINAL_CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
         const chunkRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/chunk/${upload_id}`, {

@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     cors_origins: list[str]
     debug_ui: bool = False
     api_port: int = 8000
+    upload_chunk_size: int = 90 * 1024 * 1024  # 90 MB default for Cloudflare safety
 
     @field_validator("cors_origins", mode="before")
     @classmethod

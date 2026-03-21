@@ -309,7 +309,8 @@ async def initialize_chunked_upload(
     fd, tmp_path = tempfile.mkstemp()
     os.close(fd)
     _chunked_uploads[upload_id] = tmp_path
-    return {"upload_id": upload_id}
+    from app.core.config import get_settings
+    return {"upload_id": upload_id, "chunk_size": get_settings().upload_chunk_size}
 
 
 @router.post("/upload/chunk/{upload_id}", status_code=204)

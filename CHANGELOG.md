@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Chunked file upload support for large files (> 50MB): splits files into 10MB chunks to bypass Cloudflare and Nginx payload limits (fixes 413 Payload Too Large)
+- Chunked file upload support for large files (> 50MB): default 90MB chunks to bypass Cloudflare and Nginx payload limits (fixes 413 Payload Too Large)
+- Configurable chunk size: added `UPLOAD_CHUNK_SIZE` environment variable to the backend, allowing users to tune upload performance and granularity
 - Smooth, real-time progress reporting: implemented `XMLHttpRequest` for individual chunks, providing intra-chunk progress updates instead of jumping after each block
 - Backend endpoints for initializing, uploading chunks, and finalizing uploads to support the new chunking mechanism
 
