@@ -12,6 +12,7 @@ export interface UploadState {
   status: UploadStatus;
   error?: string;
   folderId?: string;
+  isDuplicate?: boolean;
 }
 
 interface UploadStore {
@@ -19,7 +20,7 @@ interface UploadStore {
   addUpload: (upload: UploadState) => void;
   promoteUpload: (tempId: string, realId: string, fileId?: string) => void;
   updateProgress: (operationId: string, progress: number) => void;
-  setStatus: (operationId: string, status: UploadStatus, error?: string) => void;
+  setStatus: (operationId: string, status: UploadStatus, error?: string, isDuplicate?: boolean) => void;
   removeUpload: (operationId: string) => void;
 }
 
@@ -53,11 +54,11 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
       set({ uploads: next });
     }
   },
-  setStatus: (operationId, status, error) => {
+  setStatus: (operationId, status, error, isDuplicate) => {
     const next = new Map(get().uploads);
     const existing = next.get(operationId);
     if (existing) {
-      next.set(operationId, { ...existing, status, error });
+      next.set(operationId, { ...existing, status, error, isDuplicate });
       set({ uploads: next });
     }
   },
