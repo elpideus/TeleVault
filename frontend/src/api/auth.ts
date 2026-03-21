@@ -3,14 +3,7 @@ import type { PhoneLoginIn, OTPSubmitIn, RefreshIn } from "./schema";
 
 export const authKeys = {
   me: ["auth", "me"] as const,
-  accounts: ["auth", "accounts"] as const,
 };
-
-export async function listAccounts() {
-  const { data, error } = await apiClient.GET("/api/v1/auth/accounts");
-  if (error) throw error;
-  return data;
-}
 
 export async function sendPhoneLogin(body: PhoneLoginIn) {
   const { data, error } = await apiClient.POST("/api/v1/auth/phone", {
