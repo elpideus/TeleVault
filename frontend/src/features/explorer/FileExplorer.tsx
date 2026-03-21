@@ -3,7 +3,6 @@ import { useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { QueryClient } from "@tanstack/react-query";
 import { fetchFolders, folderKeys } from "../../api/folders";
 import { springFluid } from "../../lib/springs";
 import { useUIStore } from "../../store/uiStore";
@@ -11,17 +10,16 @@ import { useClipboardStore } from "../../store/clipboardStore";
 import { useFolderBrowser } from "../../hooks/useFolderBrowser";
 import { useUploadStore } from "../../store/uploadStore";
 import { generateUUID } from "../../utils/uuid";
-import { uploadFile, fileKeys } from "../../api/files";
-import { createProgressSource } from "../../api/progress";
+import { uploadFile } from "../../api/files";
 import { useAuthStore } from "../../store/authStore";
 import { getBaseUrl } from "../../api/client";
 import { useExplorerStore } from "../../store/explorerStore";
 import { useExplorerActions } from "../../hooks/useExplorerActions";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useLassoSelection } from "../../hooks/useLassoSelection";
+import { useGlobalProgress } from "../../hooks/useGlobalProgress";
 import { toast } from "../../lib/toast";
 import { createSemaphore } from "../../lib/semaphore";
-import { getConcurrency } from "../../api/accounts";
 import { ConfirmModal } from "../../themes/default/components/ConfirmModal";
 import { MoveModal } from "../../themes/default/components/MoveModal";
 import type { FileItem, FolderItem } from "../../types/files";
@@ -54,98 +52,6 @@ import { EmptyAreaContextMenu } from "../../themes/default/components/EmptyAreaC
 import { Button, IconButton } from "../../themes/default/components/Button";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
-/**
- * Fire-and-forget SSE watcher for a single upload operation.
- * Handles status updates, query invalidation, and toast notifications
- * independently of the upload semaphore — Telegram processing runs in
- * parallel with subsequent XHR uploads.
- */
-function watchCompletion(
-  opId: string,
-  fileName: string,
-  token: string,
-  queryClient: QueryClient,
-): void {
-  const { updateProgress, setStatus } = useUploadStore.getState();
-  let done = false;
-  let retries = 0;
-  const MAX_RETRIES = 8;
-  let retryDelay = 1000;
-  let retryTimer: ReturnType<typeof setTimeout> | null = null;
-  let source: EventSource | null = null;
-
-  const cleanup = (unsub?: () => void) => {
-    done = true;
-    if (retryTimer !== null) clearTimeout(retryTimer);
-    source?.close();
-    source = null;
-    unsub?.();
-  };
-
-  // Also watch Zustand store — useUploadSSE in TransferItem may resolve first.
-  const unsub = useUploadStore.subscribe((state) => {
-    if (done) return;
-    const u = state.uploads.get(opId);
-    if (!u || u.status === "complete") {
-      cleanup(unsub);
-      void queryClient.invalidateQueries({ queryKey: fileKeys.all });
-    } else if (u.status === "error" || u.status === "cancelled") {
-      cleanup(unsub);
-    }
-  });
-
-  const connect = () => {
-    if (done) return;
-    source = createProgressSource(opId, token);
-
-    const onMsg = (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data as string) as {
-          pct?: number;
-          status?: string;
-          message?: string;
-        };
-        if (typeof data.pct === "number") {
-          updateProgress(opId, Math.min(100, Math.max(0, data.pct)));
-        }
-        if (data.status === "done" || data.status === "complete") {
-          setStatus(opId, "complete");
-          cleanup(unsub);
-          void queryClient.invalidateQueries({ queryKey: fileKeys.all });
-          toast.success(`Uploaded ${fileName}`);
-        } else if (data.status === "error") {
-          const msg = data.message ?? "Upload failed";
-          setStatus(opId, "error", msg);
-          cleanup(unsub);
-          toast.error(`Failed to upload ${fileName}: ${msg}`);
-        }
-      } catch {
-        // Malformed SSE data — ignore
-      }
-    };
-
-    source.addEventListener("progress", onMsg);
-    source.onmessage = onMsg;
-    source.onerror = () => {
-      source?.close();
-      source = null;
-      if (done) return;
-      retries++;
-      if (retries > MAX_RETRIES) {
-        setStatus(opId, "error", "Connection lost");
-        cleanup(unsub);
-        toast.error(`Failed to upload ${fileName}: Connection lost`);
-        return;
-      }
-      retryTimer = setTimeout(() => {
-        retryDelay = Math.min(retryDelay * 2, 16_000);
-        connect();
-      }, retryDelay);
-    };
-  };
-
-  connect();
-}
 
 export function FileExplorer() {
   const { "*": slug = "" } = useParams();
@@ -155,7 +61,9 @@ export function FileExplorer() {
   const uiStore = useUIStore();
   const clipboard = useClipboardStore();
   const { user } = useAuthStore();
+  const token = useAuthStore((s) => s.accessToken) ?? null;
 
+  useGlobalProgress(token);
 
   const explorerStore = useExplorerStore();
   const explorerActions = useExplorerActions(slug);
@@ -356,34 +264,28 @@ export function FileExplorer() {
         });
       }
 
-      // Kick off concurrent uploads — N slots, one per connected account.
+      // Three-stage pipeline:
+      //   hashSem(1)  — one file hashes at a time; released as soon as hash
+      //                 is done so the next file can hash while this one waits
+      //                 for its TeleVault XHR slot.
+      //   tvSem(1)    — one file uploads to TeleVault at a time; released when
+      //                 the XHR completes so the next file can start uploading
+      //                 while Telegram processes the current one.
+      //   Telegram    — N-worker pool on the backend; runs independently.
+      //
+      // At steady state: 1 file hashing, 1 uploading to TeleVault, N in Telegram.
       void (async () => {
-        let n = 1;
-        try {
-          const result = await getConcurrency();
-          n = Math.max(1, result.concurrency);
-        } catch {
-          // Network error — fall back to serial (1 slot)
-        }
-
-        // uploadSem(N): files stay "queued" until an account slot opens.
-        // hashSem(1): only one file hashes at a time, but hashing runs
-        // concurrently with other files' XHR uploads (hashSem is released
-        // as soon as onUploadProgress fires for the first time).
-        const uploadSem = createSemaphore(n);
         const hashSem = createSemaphore(1);
-        const token = useAuthStore.getState().accessToken ?? "";
+        const tvSem = createSemaphore(1);
 
         await Promise.allSettled(
           fileEntries.map(async ({ file, tempId }) => {
-            // Stay "queued" until an account slot is available.
-            await uploadSem.acquire();
-
             // Hash sequentially — only one file at a time.
             await hashSem.acquire();
             setStatus(tempId, "hashing");
 
             let hashReleased = false;
+            let tvAcquired = false;
             let realOperationId: string | null = null;
 
             try {
@@ -407,15 +309,21 @@ export function FileExplorer() {
                 },
                 (progress) => updateProgress(tempId, progress),
                 (progress) => {
-                  // First onUploadProgress call = hash done, XHR starting.
-                  // Release the hash slot so the next queued file can hash
-                  // while this file's bytes travel to the backend.
+                  setStatus(tempId, "uploading");
+                  updateProgress(tempId, progress);
+                },
+                async () => {
+                  // Hash is complete. Release the hash slot immediately so the
+                  // next file can start hashing while this one waits for a
+                  // TeleVault XHR slot.
                   if (!hashReleased) {
                     hashReleased = true;
                     hashSem.release();
                   }
-                  setStatus(tempId, "uploading");
-                  updateProgress(tempId, progress);
+                  // Wait for the sequential TeleVault upload slot.
+                  setStatus(tempId, "upload_queued");
+                  await tvSem.acquire();
+                  tvAcquired = true;
                 },
               );
             } catch (err) {
@@ -423,7 +331,10 @@ export function FileExplorer() {
                 hashReleased = true;
                 hashSem.release();
               }
-              uploadSem.release();
+              if (tvAcquired) {
+                tvAcquired = false;
+                tvSem.release();
+              }
               if ((err as Error).message !== "Upload cancelled") {
                 const opId = realOperationId ?? tempId;
                 setStatus(opId, "error", (err as Error).message);
@@ -432,29 +343,28 @@ export function FileExplorer() {
               return;
             }
 
-            // Ensure hashSem is released even when onUploadProgress was never
-            // called (e.g. duplicate file where XHR is skipped entirely).
+            // Ensure hashSem is always released (e.g. if onHashComplete was
+            // never called because uploadFile threw before reaching it).
             if (!hashReleased) {
               hashReleased = true;
               hashSem.release();
             }
 
-            // XHR bytes are on the server — release the upload slot so the
-            // next queued file can start while Telegram processes this one.
-            uploadSem.release();
-
-            // Watch Telegram processing independently (fire-and-forget).
+            // TeleVault upload done — mark as "staged" (in Telegram queue,
+            // waiting for a worker) before releasing the TeleVault slot.
+            // Only do this if it hasn't somehow progressed further via SSE.
             if (realOperationId) {
-              // Check if already complete (SSE may have arrived during XHR).
-              const immediateState = useUploadStore
-                .getState()
-                .uploads.get(realOperationId);
-              if (immediateState?.status === "complete") {
-                void queryClient.invalidateQueries({ queryKey: fileKeys.all });
-                toast.success(`Uploaded ${file.name}`);
-              } else if (immediateState?.status !== "error") {
-                watchCompletion(realOperationId, file.name, token, queryClient);
+              const current = useUploadStore.getState().uploads.get(realOperationId);
+              if (current && current.status === "uploading") {
+                setStatus(realOperationId, "staged");
               }
+            }
+
+            // Release the TeleVault slot so the next queued file can upload
+            // to TeleVault while Telegram processes this one.
+            if (tvAcquired) {
+              tvAcquired = false;
+              tvSem.release();
             }
           }),
         );

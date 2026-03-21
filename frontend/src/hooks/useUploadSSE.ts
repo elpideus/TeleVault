@@ -25,6 +25,8 @@ export function useUploadSSE(operationId: string, token: string) {
   const sourceRef = useRef<EventSource | null>(null);
 
   const upload = uploads.get(operationId);
+  // "staged" is intentionally NOT terminal — SSE must connect so we can
+  // detect when the Telegram worker picks up the job and transition to "processing".
   const isTerminal =
     !upload ||
     upload.status === "queued" ||
@@ -61,6 +63,11 @@ export function useUploadSSE(operationId: string, token: string) {
         try {
           const data = JSON.parse(e.data as string) as ProgressEvent;
           if (typeof data.pct === "number") {
+            // Transition "staged" → "processing" the moment Telegram sends its first event.
+            const current = useUploadStore.getState().uploads.get(operationId);
+            if (current?.status === "staged") {
+              setStatus(operationId, "processing");
+            }
             updateProgress(operationId, Math.min(100, Math.max(0, data.pct)));
           }
           // Backend sends status "done" on success (not "complete")

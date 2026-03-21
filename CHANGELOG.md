@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-03-21
+
+### Added
+
+- New "Queued" status for uploads waiting in the transfer manager to improve clarity during high-concurrency operations
+
+### Fixed
+
+- SSE connection deadlock: consolidated multiple independent progress streams into a single global event source (`useGlobalProgress` hook), preventing browsers from hitting the per-domain connection limit
+- Improved SSE heartbeat reliability: standardized ping events to prevent QUIC/TCP idle-timeout disconnects during long-running transfers
+- Backend process/status stream merger: unified the event fan-out logic to reduce server load and simplify client-side event handling
+
+### Changed
+
+- Refactored `FileExplorer` to use the global progress hook, removing redundant connection logic and making completion detection more robust
+- UI polishing in the transfer manager: improved layout and state transitions for background hashing/uploading tasks
+
+### Removed
+
+- Stale utility scripts (`reset-docker.ps1`, `reset-docker.sh`) and temporary screenshots
+
+---
+
 ## [1.1.0] - 2026-03-21
 
 ### Added
@@ -161,6 +184,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VITE_THEME` build argument for UI theme selection
 - `ADMIN_TELEGRAM_ID` environment variable for automatic admin promotion on first login
 
+[1.1.1]: https://github.com/elpideus/TeleVault/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/elpideus/TeleVault/compare/v1.0.11...v1.1.0
+[1.0.11]: https://github.com/elpideus/TeleVault/compare/v1.0.10...v1.0.11
+[1.0.10]: https://github.com/elpideus/TeleVault/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/elpideus/TeleVault/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/elpideus/TeleVault/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/elpideus/TeleVault/compare/v1.0.6...v1.0.7

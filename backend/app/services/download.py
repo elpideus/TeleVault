@@ -68,7 +68,7 @@ def download_stream(
     file: File,
     splits: list[Split],
 ) -> tuple[str, AsyncGenerator[bytes, None]]:
-    operation_id = registry.create_operation()
+    operation_id = registry.create_operation(owner_id)
 
     async def _generate() -> AsyncGenerator[bytes, None]:
         client = pool.get_client_for_user(owner_id)

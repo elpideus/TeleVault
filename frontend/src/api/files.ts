@@ -108,6 +108,7 @@ export async function uploadFile(
   onProgress?: (operationId: string | null, fileId: string) => void,
   onHashProgress?: (progress: number) => void,
   onUploadProgress?: (progress: number) => void,
+  onHashComplete?: () => Promise<void>,
 ) {
   const token = getToken();
   const baseUrl = getBaseUrl();
@@ -132,6 +133,10 @@ export async function uploadFile(
     };
     worker.postMessage(file);
   });
+
+  // 1b. Notify caller that hash is complete — lets the caller release the hash
+  //     semaphore and acquire the TeleVault XHR semaphore before we start uploading.
+  await onHashComplete?.();
 
   // 2. Pre-check for duplicate before uploading the full file
   const { error: checkError, response: checkRes } = await apiClient.POST("/api/v1/files/check-hash" as any, {
@@ -298,6 +303,8 @@ export async function uploadFile(
 
     if (finalizeRes.status < 200 || finalizeRes.status >= 300) throw new Error(`Finalization failed: ${finalizeRes.status}`);
     const data = JSON.parse(finalizeRes.body);
+    // Ensure the TeleVault progress bar reaches 100% before transitioning.
+    onUploadProgress?.(100);
     onProgress?.(data.operation_id, data.file_id);
     return data;
   }
@@ -379,6 +386,8 @@ export async function uploadFile(
     }
   })();
 
+  // Ensure the TeleVault progress bar reaches 100% before transitioning.
+  onUploadProgress?.(100);
   onProgress?.(data.operation_id, data.file_id);
   return data;
 }

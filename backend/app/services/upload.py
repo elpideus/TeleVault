@@ -180,7 +180,7 @@ async def prepare_upload(
         )
 
     channel = await session.get(Channel, channel_id)
-    operation_id = registry.create_operation()
+    operation_id = registry.create_operation(owner_id)
     file_id = uuid.uuid4()
     num_splits = max(1, math.ceil(total_size / _SPLIT_SIZE))
     return operation_id, file_id, num_splits, channel

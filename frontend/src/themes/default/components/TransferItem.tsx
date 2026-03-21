@@ -6,6 +6,7 @@ import {
   ErrorCircle20Filled,
   DismissCircle20Filled,
   ArrowUpload20Regular,
+  Clock20Regular,
 } from "@fluentui/react-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../../lib/cn";
@@ -13,8 +14,6 @@ import { springFluid, springSnappy, exitTransition } from "../../../lib/springs"
 import type { UploadState } from "../../../store/uploadStore";
 import { formatBytes } from "../../../lib/formatBytes";
 import { fileKeys } from "../../../api/files";
-import { useUploadSSE } from "../../../hooks/useUploadSSE";
-import { useAuthStore } from "../../../store/authStore";
 
 export interface TransferItemProps {
   upload: UploadState;
@@ -22,35 +21,12 @@ export interface TransferItemProps {
   onRemove?: (operationId: string) => void;
 }
 
-const STATUS_ICON_MAP = {
-  uploading: null,
-  complete: (
-    <CheckmarkCircle20Filled
-      style={{ color: "var(--tv-success)", flexShrink: 0 }}
-    />
-  ),
-  error: (
-    <ErrorCircle20Filled
-      style={{ color: "var(--tv-error)", flexShrink: 0 }}
-    />
-  ),
-  cancelled: (
-    <DismissCircle20Filled
-      style={{ color: "var(--tv-text-disabled)", flexShrink: 0 }}
-    />
-  ),
-};
-
 export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) {
   const shouldReduceMotion = useReducedMotion();
   const { operationId, fileName, fileSize, progress, status, error } = upload;
 
   const queryClient = useQueryClient();
-  const token = useAuthStore((s) => s.accessToken) ?? "";
   const prevStatus = useRef<string>(upload.status);
-
-  // Connect to SSE for progress updates
-  useUploadSSE(operationId, token);
 
   useEffect(() => {
     if (prevStatus.current !== "complete" && upload.status === "complete") {
@@ -65,9 +41,49 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
   const isTerminal =
     status === "complete" || status === "error" || status === "cancelled";
 
+  const isActive =
+    status === "uploading" || status === "processing" || status === "hashing";
+
   const progressTransition = shouldReduceMotion
     ? { duration: 0 }
     : { ...springFluid };
+
+  // Leading icon
+  const leadingIcon = (() => {
+    if (status === "complete")
+      return <CheckmarkCircle20Filled style={{ color: "var(--tv-success)", flexShrink: 0 }} />;
+    if (status === "error")
+      return <ErrorCircle20Filled style={{ color: "var(--tv-error)", flexShrink: 0 }} />;
+    if (status === "cancelled")
+      return <DismissCircle20Filled style={{ color: "var(--tv-text-disabled)", flexShrink: 0 }} />;
+    if (status === "staged")
+      return <Clock20Regular style={{ color: "var(--tv-accent-primary)", flexShrink: 0 }} />;
+    if (status === "queued" || status === "upload_queued")
+      return <ArrowUpload20Regular style={{ color: "var(--tv-text-disabled)", flexShrink: 0 }} />;
+    // hashing / uploading / processing
+    return <ArrowUpload20Regular style={{ color: "var(--tv-accent-primary)", flexShrink: 0 }} />;
+  })();
+
+  // Status label
+  const statusLabel = (() => {
+    if (status === "queued")
+      return <span style={{ color: "var(--tv-text-disabled)", marginLeft: 6 }}>Queued</span>;
+    if (status === "upload_queued")
+      return <span style={{ color: "var(--tv-text-disabled)", marginLeft: 6 }}>Queued (TeleVault)</span>;
+    if (status === "hashing")
+      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Hashing {Math.round(progress)}%</span>;
+    if (status === "uploading")
+      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Uploading (TeleVault)... {Math.round(progress)}%</span>;
+    if (status === "staged")
+      return <span style={{ color: "var(--tv-text-secondary)", marginLeft: 6 }}>Queued (Telegram)</span>;
+    if (status === "processing")
+      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Uploading (Telegram)... {Math.round(progress)}%</span>;
+    if (status === "error" && error)
+      return <span style={{ color: "var(--tv-error)", marginLeft: 6 }} className="truncate block">{error}</span>;
+    if (upload.isDuplicate)
+      return <span style={{ color: "var(--tv-text-secondary)", marginLeft: 6 }}>(Already in Vault)</span>;
+    return null;
+  })();
 
   return (
     <motion.div
@@ -109,14 +125,10 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
       <div className="relative flex items-center gap-2 min-w-0">
         {/* Leading icon */}
         <div className="flex-shrink-0 text-[var(--tv-text-secondary)]">
-          {status === "uploading" || status === "processing" || status === "hashing" || status === "queued" ? (
-            <ArrowUpload20Regular style={{ color: status === "queued" ? "var(--tv-text-disabled)" : "var(--tv-accent-primary)" }} />
-          ) : (
-            STATUS_ICON_MAP[status as keyof typeof STATUS_ICON_MAP]
-          )}
+          {leadingIcon}
         </div>
 
-        {/* Name + size */}
+        {/* Name + size + status */}
         <div className="flex-1 min-w-0">
           <p
             className="truncate"
@@ -135,39 +147,7 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
             }}
           >
             {formatBytes(fileSize)}
-            {upload.isDuplicate && (
-              <span style={{ color: "var(--tv-text-secondary)", marginLeft: 6 }}>
-                (Already in Vault)
-              </span>
-            )}
-            {status === "queued" && (
-              <span style={{ color: "var(--tv-text-disabled)", marginLeft: 6 }}>
-                Queued
-              </span>
-            )}
-            {status === "hashing" && (
-              <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>
-                Hashing {Math.round(progress)}%
-              </span>
-            )}
-            {status === "uploading" && (
-              <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>
-                Uploading (TeleVault)... {Math.round(progress)}%
-              </span>
-            )}
-            {status === "processing" && (
-              <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>
-                Uploading (Telegram)... {Math.round(progress)}%
-              </span>
-            )}
-            {status === "error" && error && (
-              <span
-                style={{ color: "var(--tv-error)", marginLeft: 6 }}
-                className="truncate block"
-              >
-                {error}
-              </span>
-            )}
+            {statusLabel}
           </p>
         </div>
 
@@ -221,7 +201,7 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
 
       {/* ── Progress bar ────────────────────────────────────────────────── */}
       <AnimatePresence>
-        {(status === "uploading" || status === "processing" || status === "hashing" || status === "queued") && (
+        {(isActive || status === "queued" || status === "upload_queued") && (
           <motion.div
             key="progress-track"
             initial={shouldReduceMotion ? {} : { opacity: 0 }}
@@ -233,12 +213,35 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
           >
             <motion.div
               className="absolute inset-y-0 left-0 rounded-full"
-              style={{ background: status === "queued" ? "var(--tv-text-disabled)" : "var(--tv-accent-primary)", width: status === "queued" ? "0%" : undefined }}
-              animate={{ width: status === "queued" ? "0%" : `${progress}%` }}
+              style={{
+                background: (status === "queued" || status === "upload_queued") ? "var(--tv-text-disabled)" : "var(--tv-accent-primary)",
+              }}
+              animate={{ width: (status === "queued" || status === "upload_queued") ? "0%" : `${progress}%` }}
               transition={progressTransition}
             />
           </motion.div>
         )}
+
+        {/* Staged: full bar at 100% with a gentle pulse to indicate "ready, waiting" */}
+        {status === "staged" && (
+          <motion.div
+            key="progress-staged"
+            initial={shouldReduceMotion ? {} : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={shouldReduceMotion ? {} : { opacity: 0 }}
+            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
+            className="relative w-full h-1 rounded-full overflow-hidden"
+            style={{ background: "var(--tv-bg-subtle)" }}
+          >
+            <motion.div
+              className="absolute inset-y-0 left-0 right-0 rounded-full"
+              style={{ background: "var(--tv-accent-subtle-border)" }}
+              animate={shouldReduceMotion ? {} : { opacity: [0.5, 1, 0.5] }}
+              transition={shouldReduceMotion ? { duration: 0 } : { duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+            />
+          </motion.div>
+        )}
+
         {status === "complete" && (
           <motion.div
             key="progress-complete"
