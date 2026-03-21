@@ -315,11 +315,19 @@ async def upload_file(
 
 # --- Chunked Upload Endpoints ---
 
-_chunked_uploads: dict[str, str] = {}  # upload_id -> tmp_path
+# upload_id -> (tmp_path, chunk_size)
+_chunked_uploads: dict[str, tuple[str, int]] = {}
 
 
-def _append_bytes(path: str, data: bytes) -> None:
-    with open(path, "ab") as f:
+def _preallocate_file(path: str, size: int) -> None:
+    with open(path, "wb") as f:
+        f.seek(size - 1)
+        f.write(b"\x00")
+
+
+def _write_chunk_at_offset(path: str, offset: int, data: bytes) -> None:
+    with open(path, "r+b") as f:
+        f.seek(offset)
         f.write(data)
 
 
@@ -330,27 +338,32 @@ async def initialize_chunked_upload(
     current_user: User = Depends(get_current_user),
 ):
     """Start a chunked upload for a large file."""
+    from app.core.config import get_settings
+    chunk_size = get_settings().upload_chunk_size
     upload_id = str(uuid.uuid4())
     fd, tmp_path = tempfile.mkstemp()
     os.close(fd)
-    _chunked_uploads[upload_id] = tmp_path
-    from app.core.config import get_settings
-    return {"upload_id": upload_id, "chunk_size": get_settings().upload_chunk_size}
+    # Pre-allocate the full file so parallel chunk writes land at correct offsets.
+    await asyncio.to_thread(_preallocate_file, tmp_path, body.total_size)
+    _chunked_uploads[upload_id] = (tmp_path, chunk_size)
+    return {"upload_id": upload_id, "chunk_size": chunk_size}
 
 
-@router.post("/upload/chunk/{upload_id}", status_code=204)
+@router.post("/upload/chunk/{upload_id}/{chunk_index}", status_code=204)
 async def upload_chunk(
     upload_id: str,
+    chunk_index: int,
     request: Request,
 ):
-    """Append a chunk of data to the temporary file."""
-    tmp_path = _chunked_uploads.get(upload_id)
-    if not tmp_path:
+    """Write a chunk at its correct byte offset, enabling parallel uploads."""
+    entry = _chunked_uploads.get(upload_id)
+    if not entry:
         raise HTTPException(status_code=404, detail="Upload session not found or expired.")
+    tmp_path, chunk_size = entry
+    offset = chunk_index * chunk_size
 
-    # Collect chunk bytes then write off the event loop to avoid blocking it.
     data = b"".join([chunk async for chunk in request.stream()])
-    await asyncio.to_thread(_append_bytes, tmp_path, data)
+    await asyncio.to_thread(_write_chunk_at_offset, tmp_path, offset, data)
 
 
 @router.post("/upload/finalize/{upload_id}", status_code=202, response_model=FileUploadOut)
@@ -362,9 +375,10 @@ async def finalize_chunked_upload(
     pool: ClientPool = Depends(get_client_pool),
 ):
     """Finalize the chunked upload and start Telegram processing."""
-    tmp_path = _chunked_uploads.pop(upload_id, None)
-    if not tmp_path:
+    entry = _chunked_uploads.pop(upload_id, None)
+    if not entry:
         raise HTTPException(status_code=404, detail="Upload session not found.")
+    tmp_path, _ = entry
 
     if not os.path.exists(tmp_path):
         raise HTTPException(status_code=404, detail="Temporary file missing.")

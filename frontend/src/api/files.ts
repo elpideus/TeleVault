@@ -247,26 +247,41 @@ export async function uploadFile(
     const { upload_id, chunk_size } = JSON.parse(initRes.body);
     const FINAL_CHUNK_SIZE = chunk_size || 90 * 1024 * 1024;
 
-    let totalUploadedPreviousChunks = 0;
     const totalChunks = Math.ceil(file.size / FINAL_CHUNK_SIZE);
+    const CONCURRENCY = 4;
 
-    for (let i = 0; i < totalChunks; i++) {
+    // Track bytes uploaded per chunk index for accurate parallel progress.
+    const uploadedPerChunk = new Array(totalChunks).fill(0);
+    const reportProgress = () => {
+      const totalUploaded = uploadedPerChunk.reduce((a, b) => a + b, 0);
+      onUploadProgress?.(Math.round((totalUploaded / file.size) * 100));
+    };
+
+    // Upload chunks in parallel, CONCURRENCY at a time.
+    for (let batch = 0; batch < totalChunks; batch += CONCURRENCY) {
+      const indices = Array.from(
+        { length: Math.min(CONCURRENCY, totalChunks - batch) },
+        (_, j) => batch + j,
+      );
+      await Promise.all(indices.map(async (i) => {
         const start = i * FINAL_CHUNK_SIZE;
         const end = Math.min(start + FINAL_CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
-        const chunkRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/chunk/${upload_id}`, {
+        const chunkRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/chunk/${upload_id}/${i}`, {
           method: "POST",
           headers: { "Content-Type": "application/octet-stream" },
           body: chunk,
           onProgress: (loaded) => {
-            const currentTotalUploaded = totalUploadedPreviousChunks + loaded;
-            onUploadProgress?.(Math.round((currentTotalUploaded / file.size) * 100));
-          }
+            uploadedPerChunk[i] = loaded;
+            reportProgress();
+          },
         });
 
         if (chunkRes.status !== 204) throw new Error(`Chunk ${i} upload failed: ${chunkRes.status}`);
-        totalUploadedPreviousChunks += chunk.size;
+        uploadedPerChunk[i] = chunk.size;
+        reportProgress();
+      }));
     }
 
     const finalizeRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/finalize/${upload_id}`, {
@@ -345,7 +360,7 @@ export async function uploadFile(
     }
   }
 
-  const data = await ((): { operation_id: string; file_id: string } => {
+  const data = ((): { operation_id: string; file_id: string } => {
     if (xhrResult.status >= 200 && xhrResult.status < 300) {
       try {
         return JSON.parse(xhrResult.body);
