@@ -25,7 +25,7 @@ from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.db.models.file import FILE_STATUS_FAILED, FILE_STATUS_PENDING, File
 from app.db.session import AsyncSessionLocal
-from app.telegram import client_pool
+from app.telegram import client_pool, upload_worker_pool
 from sqlalchemy import delete, or_
 
 logger = logging.getLogger(__name__)
@@ -66,9 +66,21 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as session:
         await client_pool.initialize(session)
     asyncio.create_task(client_pool.start_health_check_loop(AsyncSessionLocal))
+
+    # Seed upload workers for already-connected accounts.
+    _seen_owners: set[int] = set()
+    for _owner_id in client_pool._owners.values():
+        if _owner_id not in _seen_owners:
+            _seen_owners.add(_owner_id)
+            _active = client_pool.get_active_count(_owner_id)
+            if _active > 0:
+                upload_worker_pool.set_worker_count(_owner_id, _active)
+    client_pool.register_account_change_callback(upload_worker_pool.set_worker_count)
+
     await _cleanup_stale_uploads()
     logger.info("TeleVault API is ready")
     yield
+    await upload_worker_pool.shutdown()
     await client_pool.shutdown()
     logger.info("TeleVault API shutting down")
 
