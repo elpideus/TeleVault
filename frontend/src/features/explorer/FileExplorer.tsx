@@ -366,14 +366,24 @@ export function FileExplorer() {
           // Network error — fall back to serial (1 slot)
         }
 
-        const sem = createSemaphore(n);
+        // uploadSem(N): files stay "queued" until an account slot opens.
+        // hashSem(1): only one file hashes at a time, but hashing runs
+        // concurrently with other files' XHR uploads (hashSem is released
+        // as soon as onUploadProgress fires for the first time).
+        const uploadSem = createSemaphore(n);
+        const hashSem = createSemaphore(1);
         const token = useAuthStore.getState().accessToken ?? "";
 
         await Promise.allSettled(
           fileEntries.map(async ({ file, tempId }) => {
-            await sem.acquire();
+            // Stay "queued" until an account slot is available.
+            await uploadSem.acquire();
 
+            // Hash sequentially — only one file at a time.
+            await hashSem.acquire();
             setStatus(tempId, "hashing");
+
+            let hashReleased = false;
             let realOperationId: string | null = null;
 
             try {
@@ -384,6 +394,10 @@ export function FileExplorer() {
                   realOperationId = operationId;
                   if (operationId) {
                     promoteUpload(tempId, operationId, fileId);
+                    // Reset progress so the bar starts from 0 for the
+                    // Telegram upload phase (avoids showing XHR progress
+                    // as if it were Telegram progress).
+                    updateProgress(operationId, 0);
                     setStatus(operationId, "processing");
                   } else {
                     // Duplicate — already exists on server
@@ -393,12 +407,23 @@ export function FileExplorer() {
                 },
                 (progress) => updateProgress(tempId, progress),
                 (progress) => {
+                  // First onUploadProgress call = hash done, XHR starting.
+                  // Release the hash slot so the next queued file can hash
+                  // while this file's bytes travel to the backend.
+                  if (!hashReleased) {
+                    hashReleased = true;
+                    hashSem.release();
+                  }
                   setStatus(tempId, "uploading");
                   updateProgress(tempId, progress);
                 },
               );
             } catch (err) {
-              sem.release();
+              if (!hashReleased) {
+                hashReleased = true;
+                hashSem.release();
+              }
+              uploadSem.release();
               if ((err as Error).message !== "Upload cancelled") {
                 const opId = realOperationId ?? tempId;
                 setStatus(opId, "error", (err as Error).message);
@@ -407,9 +432,16 @@ export function FileExplorer() {
               return;
             }
 
-            // XHR bytes are on the server — release the slot so the next file
-            // can start uploading while Telegram processing runs in the background.
-            sem.release();
+            // Ensure hashSem is released even when onUploadProgress was never
+            // called (e.g. duplicate file where XHR is skipped entirely).
+            if (!hashReleased) {
+              hashReleased = true;
+              hashSem.release();
+            }
+
+            // XHR bytes are on the server — release the upload slot so the
+            // next queued file can start while Telegram processes this one.
+            uploadSem.release();
 
             // Watch Telegram processing independently (fire-and-forget).
             if (realOperationId) {
