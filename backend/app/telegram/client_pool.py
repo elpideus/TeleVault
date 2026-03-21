@@ -39,6 +39,7 @@ class ClientPool:
         self._pending_phone: dict[str, PendingPhoneLogin] = {}
         self._pending_qr: dict[str, PendingQRLogin] = {}
         self._rr_index: dict[int, int] = {}  # owner_telegram_id → next index
+        self._on_account_change_callbacks: list = []  # list[Callable[[int, int], None]]
 
     async def initialize(self, session: AsyncSession) -> None:
         settings = get_settings()
@@ -125,6 +126,15 @@ class ClientPool:
             if owner_id == owner_telegram_id and account_id in self._clients
         ]
 
+    def get_active_count(self, owner_telegram_id: int) -> int:
+        """Return the number of active connected clients for a user."""
+        return len(self.get_all_clients_for_user(owner_telegram_id))
+
+    def register_account_change_callback(self, cb) -> None:
+        """Register a callback invoked with (owner_telegram_id, new_count) when
+        an account is added or its session is revoked by the health check."""
+        self._on_account_change_callbacks.append(cb)
+
     def get_next_client_round_robin(
         self, owner_telegram_id: int
     ) -> tuple[uuid.UUID, "TelegramClient"]:
@@ -198,8 +208,13 @@ class ClientPool:
                             ta.is_active = False
                             ta.session_error = str(exc)
                             await db.commit()
+                    owner_id = self._owners.get(account_id)
                     self._clients.pop(account_id, None)
                     self._owners.pop(account_id, None)
+                    if owner_id is not None:
+                        _new_count = self.get_active_count(owner_id)
+                        for cb in self._on_account_change_callbacks:
+                            cb(owner_id, _new_count)
                     try:
                         await client.disconnect()
                     except Exception:
