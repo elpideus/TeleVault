@@ -281,7 +281,7 @@ export function FileExplorer() {
                 } else {
                   // Duplicate file — already exists
                   updateProgress(tempId, 100);
-                  setStatus(tempId, "complete");
+                  setStatus(tempId, "complete", undefined, true);
                 }
               },
               (progress) => updateProgress(tempId, progress),

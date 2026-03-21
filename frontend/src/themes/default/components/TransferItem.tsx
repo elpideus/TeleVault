@@ -135,6 +135,11 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
             }}
           >
             {formatBytes(fileSize)}
+            {upload.isDuplicate && (
+              <span style={{ color: "var(--tv-text-secondary)", marginLeft: 6 }}>
+                (Already in Vault)
+              </span>
+            )}
             {status === "queued" && (
               <span style={{ color: "var(--tv-text-disabled)", marginLeft: 6 }}>
                 Queued
