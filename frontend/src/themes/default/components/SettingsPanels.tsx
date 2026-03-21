@@ -18,7 +18,7 @@ import { Kbd } from "./Kbd";
 import { Separator } from "./Separator";
 import { Tooltip } from "./Tooltip";
 import { Input } from "./Input";
-import { DialogContent, DialogHeader, DialogFooter } from "./DialogBase";
+import { DialogContent, DialogHeader } from "./DialogBase";
 import {
   accountsKeys,
   listAltAccounts,
@@ -585,7 +585,6 @@ function AddAccountModal({
 
   // QR flow state
   const [qrUrl, setQrUrl] = useState<string | null>(null);
-  const [pollToken, setPollToken] = useState<string | null>(null);
   const [qrError, setQrError] = useState<string | null>(null);
   const [isInitializingQr, setIsInitializingQr] = useState(false);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -613,7 +612,6 @@ function AddAccountModal({
       setIsSendingOtp(false);
       setIsConfirming(false);
       setQrUrl(null);
-      setPollToken(null);
       setQrError(null);
       setIsInitializingQr(false);
     }
@@ -634,8 +632,8 @@ function AddAccountModal({
       const result = await initQrLogin();
       // Guard: if modal closed while awaiting, don't start polling
       if (!open) return;
+      if (!open) return;
       setQrUrl(result.qr_url);
-      setPollToken(result.poll_token);
       startPolling(result.poll_token);
     } catch {
       setQrError("Failed to initialize QR login. Please try again.");
@@ -669,7 +667,6 @@ function AddAccountModal({
           stopPolling();
           setQrError(result.message ?? "QR login failed. Try switching to phone login.");
           setQrUrl(null);
-          setPollToken(null);
         }
       } catch {
         // Polling failure is transient; keep trying
@@ -938,7 +935,7 @@ function AddAccountModal({
                     <Button variant="ghost" size="sm" onClick={() => setTab("phone")}>
                       Switch to Phone Login
                     </Button>
-                    <Button variant="secondary" size="sm" onClick={() => { setQrUrl(null); setPollToken(null); setQrError(null); handleInitQr(); }}>
+                    <Button variant="secondary" size="sm" onClick={() => { setQrUrl(null); setQrError(null); handleInitQr(); }}>
                       Retry
                     </Button>
                   </div>
@@ -1222,7 +1219,7 @@ export function AboutPanel() {
               margin: 0,
             }}
           >
-            Version 1.1.0
+            Version 1.1.1
           </p>
           <p
             style={{

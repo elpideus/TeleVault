@@ -118,8 +118,18 @@ export function TransfersTray({
     : storeUploads;
 
   const uploads = Array.from(uploadsMap.values());
-  const remainingCount = uploads.filter((u) => u.status !== "complete").length;
+
+  // "Remaining" = anything not yet at a terminal state (excludes error/cancelled too,
+  // as those no longer need action from the user).
+  const remainingCount = uploads.filter(
+    (u) => u.status !== "complete" && u.status !== "error" && u.status !== "cancelled",
+  ).length;
   const hasUploads = uploads.length > 0;
+
+  // Terminal = fully settled: complete, error, or cancelled.
+  const terminalCount = uploads.filter(
+    (u) => u.status === "complete" || u.status === "error" || u.status === "cancelled",
+  ).length;
 
   // Auto-open the tray whenever a new active upload begins
   const prevRemainingCount = useRef(0);
@@ -147,9 +157,10 @@ export function TransfersTray({
     removeUpload(operationId);
   };
 
+  // Only clear truly finished items (complete, error, cancelled).
   const handleClearAll = () => {
     uploads
-      .filter((u) => u.status !== "uploading")
+      .filter((u) => u.status === "complete" || u.status === "error" || u.status === "cancelled")
       .forEach((u) => removeUpload(u.operationId));
   };
 
@@ -159,21 +170,24 @@ export function TransfersTray({
   const [isResizing, setIsResizing] = useState(false);
   const trayRef = useRef<HTMLDivElement>(null);
   const startY = useRef(0);
-  const startHeight = useRef(height ?? 0);
+  const startHeight = useRef(0);
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    // Use offsetHeight (layout height, unaffected by CSS transforms) so that
+    // grabbing the handle during the entrance animation doesn't produce a
+    // wrong baseline. Falls back to 300 if the element isn't painted yet.
+    const el = trayRef.current;
+    const currentLayoutHeight = el?.offsetHeight ?? 0;
+    const resolvedHeight =
+      height ?? (currentLayoutHeight > 140 ? currentLayoutHeight : 300);
+
+    // Pre-snap from "auto" to a pixel value so Framer Motion never has to
+    // animate "auto" → px. Without this the tray could shrink to a line on
+    // the very first drag after an auto-open.
+    setHeight(resolvedHeight);
     setIsResizing(true);
     startY.current = e.clientY;
-
-    // Use getBoundingClientRect for accurate measurement even during transforms
-    const rect = trayRef.current?.getBoundingClientRect();
-    const currentDisplayHeight = rect ? rect.height : 0;
-
-    // Capture the ACTUAL current height from the DOM so the resize is seamless.
-    // Ensure we have a sensible floor (140) if the measurement is 0 or tiny (e.g. during mount animation).
-    startHeight.current =
-      height ?? (currentDisplayHeight > 140 ? currentDisplayHeight : 300);
-
+    startHeight.current = resolvedHeight;
     e.preventDefault();
   };
 
@@ -181,8 +195,6 @@ export function TransfersTray({
     if (!isResizing) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (isNaN(startY.current) || isNaN(startHeight.current)) return;
-
       const delta = startY.current - e.clientY;
       // Max height should be up to the breadcrumbs bar with 16px spacing (~166px from top)
       const maxAvailableHeight = Math.max(200, window.innerHeight - 166);
@@ -205,7 +217,28 @@ export function TransfersTray({
     };
   }, [isResizing]);
 
-  const terminalCount = uploads.filter((u) => u.status !== "uploading").length;
+  // Sort: errors first → active (processing/staged/uploading/hashing) → queued → complete → cancelled
+  const sortedUploads = [...uploads].sort((a, b) => {
+    const priority: Record<string, number> = {
+      error: 0,
+      processing: 1,
+      staged: 1,
+      uploading: 1,
+      hashing: 1,
+      queued: 2,
+      complete: 3,
+      cancelled: 4,
+    };
+    const pA = priority[a.status] ?? 9;
+    const pB = priority[b.status] ?? 9;
+    if (pA !== pB) return pA - pB;
+    // Within "complete": non-duplicates before duplicates
+    if (a.status === "complete" && b.status === "complete") {
+      if (a.isDuplicate && !b.isDuplicate) return 1;
+      if (!a.isDuplicate && b.isDuplicate) return -1;
+    }
+    return 0;
+  });
 
   return (
     // Fixed container — bottom-right, above everything
@@ -350,34 +383,14 @@ export function TransfersTray({
             >
               <AnimatePresence initial={false}>
                 {hasUploads ? (
-                  uploads
-                    .sort((a, b) => {
-                      const priority = {
-                        error: 0,
-                        uploading: 1,
-                        processing: 1,
-                        hashing: 1,
-                        queued: 1,
-                        complete: 2,
-                        cancelled: 3,
-                      };
-                      const pA = priority[a.status];
-                      const pB = priority[b.status];
-                      if (pA !== pB) return pA - pB;
-                      if (a.status === "complete" && b.status === "complete") {
-                        if (a.isDuplicate && !b.isDuplicate) return 1;
-                        if (!a.isDuplicate && b.isDuplicate) return -1;
-                      }
-                      return 0;
-                    })
-                    .map((upload) => (
-                      <TransferItem
-                        key={upload.id}
-                        upload={upload}
-                        onCancel={handleCancel}
-                        onRemove={handleRemove}
-                      />
-                    ))
+                  sortedUploads.map((upload) => (
+                    <TransferItem
+                      key={upload.id}
+                      upload={upload}
+                      onCancel={handleCancel}
+                      onRemove={handleRemove}
+                    />
+                  ))
                 ) : (
                   <motion.div
                     key="empty"

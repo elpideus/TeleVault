@@ -62,3 +62,24 @@ async def stream_progress(
             "X-Accel-Buffering": "no",
         },
     )
+
+@router.get("/")
+async def stream_all_progress(
+    current_user: User = Depends(_get_sse_user),
+) -> StreamingResponse:
+    async def event_generator() -> AsyncGenerator[str, None]:
+        async for event in operation_registry.stream_all(current_user.telegram_id):
+            if event.status == "ping":
+                # SSE comment — keeps QUIC/proxy connections alive
+                yield ": ping\n\n"
+            else:
+                yield f"data: {json.dumps(asdict(event))}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
