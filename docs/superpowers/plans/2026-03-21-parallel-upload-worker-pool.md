@@ -50,13 +50,24 @@ touch s:/Development/TeleVault/backend/tests/__init__.py
 - [ ] **Step 2: Create `backend/tests/conftest.py`**
 
 ```python
-import pytest
-
-# Tell pytest-asyncio to treat all async tests in this package as asyncio tests
-# without requiring the @pytest.mark.asyncio decorator on each one.
+# conftest.py — shared pytest configuration for this package.
+# The @pytest.mark.asyncio decorator on each test is sufficient for
+# pytest-asyncio strict mode (default since 0.21). No further config needed.
 ```
 
-- [ ] **Step 3: Verify pytest is available**
+- [ ] **Step 3: Add asyncio_mode to `pyproject.toml`**
+
+Open `backend/pyproject.toml` and add a `[tool.pytest.ini_options]` section at the bottom:
+
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+```
+
+With `asyncio_mode = "auto"`, all `async def test_*` functions are treated as asyncio tests automatically — no `@pytest.mark.asyncio` decorator required on each one.
+
+- [ ] **Step 4: Verify pytest is available**
 
 ```bash
 cd s:/Development/TeleVault/backend
@@ -69,12 +80,12 @@ Expected: `pytest 8.x.x` (or similar). If not found, install:
 .venv/Scripts/pip install pytest pytest-asyncio
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 cd s:/Development/TeleVault
-git add backend/tests/
-git commit -m "test: set up pytest test infrastructure"
+git add backend/tests/ backend/pyproject.toml
+git commit -m "test: set up pytest test infrastructure with asyncio_mode=auto"
 ```
 
 ---
@@ -180,11 +191,23 @@ async def test_set_worker_count_clamps_to_minimum_one():
 async def test_set_worker_count_reduces_workers():
     pool = UploadWorkerPool(registry=MagicMock(), pool=MagicMock())
     pool.set_worker_count(1, 3)
-    await asyncio.sleep(0)
+    await asyncio.sleep(0)  # let tasks start and reach queue.get()
+
+    # Capture the two tasks that will be cancelled (the ones popped from the list)
+    tasks_before = list(pool._workers[1])
     pool.set_worker_count(1, 1)
+    cancelled = tasks_before[1:]  # set_worker_count pops from the end
+
     # Give cancelled tasks time to exit via CancelledError on queue.get()
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.1)
+
+    # Verify the live worker list shrank
     assert pool.get_worker_count(1) == 1
+
+    # Verify the cancelled tasks actually exited (not just removed from list)
+    for t in cancelled:
+        assert t.done(), f"Cancelled task {t} is still running"
+
     await pool.shutdown()
 
 
@@ -726,7 +749,7 @@ git commit -m "feat: add get_active_count and account-change callback system to 
 - Modify: `backend/app/core/deps.py` — add `get_upload_worker_pool`
 - Modify: `backend/app/main.py` — seed workers, register callback, shutdown
 
-The project's pattern for singletons: they live in `app/telegram/__init__.py` alongside `client_pool` and `operation_registry`. Add `upload_worker_pool` there.
+The project's pattern for singletons: they live in `app/telegram/__init__.py` alongside `client_pool` and `operation_registry`. `deps.py` imports them directly from that module — **not** via `app.state`. This plan follows the established codebase pattern intentionally; it diverges from the spec's `app.state` suggestion in favour of consistency with `get_client_pool()` and the rest of the project.
 
 - [ ] **Step 1: Add `upload_worker_pool` to `backend/app/telegram/__init__.py`**
 
@@ -1142,6 +1165,18 @@ This is the largest frontend change. Replace the module-level `_uploadQueue` ser
 
 Read the existing `handleDrop` implementation carefully before editing — it's around lines 240–394.
 
+`uploadFile` signature (from `frontend/src/api/files.ts`):
+```typescript
+uploadFile(
+  file: File,
+  folderSlug: string | null,
+  onProgress?: (operationId: string | null, fileId: string) => void,
+  onHashProgress?: (progress: number) => void,
+  onUploadProgress?: (progress: number) => void,
+)
+```
+The `onProgress` callback fires once with the real `operationId` (or `null` for duplicates) and `fileId` after the HTTP 202 response arrives. `promoteUpload(tempId, operationId, fileId)` — the third `fileId` arg is accepted by the Zustand store (`fileId?: string` in `uploadStore.ts`).
+
 - [ ] **Step 1: Remove the module-level serial queue**
 
 Delete this line near the top of `FileExplorer.tsx` (currently line 5):
@@ -1162,7 +1197,9 @@ import { getConcurrency } from "../../api/accounts";
 
 - [ ] **Step 3: Extract `watchCompletion` as a module-level function**
 
-Add this function **outside** the `FileExplorer` component (e.g., just before the `export function FileExplorer()` line). It needs `queryClient` as a parameter since it's not inside the component:
+Add this function **outside** the `FileExplorer` component (e.g., just before the `export function FileExplorer()` line). It needs `queryClient` as a parameter since it's not inside the component.
+
+First, add `import type { QueryClient } from "@tanstack/react-query"` to the imports at the top of the file.
 
 ```typescript
 /**
@@ -1175,7 +1212,7 @@ function watchCompletion(
   opId: string,
   fileName: string,
   token: string,
-  queryClient: ReturnType<typeof import("@tanstack/react-query").useQueryClient>,
+  queryClient: QueryClient,
 ): void {
   const { updateProgress, setStatus } = useUploadStore.getState();
   let done = false;
