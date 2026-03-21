@@ -105,7 +105,7 @@ export async function updateFile(fileId: string, data: { name?: string | null })
 export async function uploadFile(
   file: File,
   folderSlug: string | null,
-  onProgress?: (operationId: string, fileId: string) => void,
+  onProgress?: (operationId: string | null, fileId: string) => void,
   onHashProgress?: (progress: number) => void,
   onUploadProgress?: (progress: number) => void,
 ) {
@@ -150,8 +150,8 @@ export async function uploadFile(
         // Already exists — fake a success response and return immediately
         const fileId = errBody.detail.detail.file_id;
         onUploadProgress?.(100);
-        onProgress?.("ALREADY_EXISTS", fileId);
-        return { operation_id: "ALREADY_EXISTS", file_id: fileId };
+        onProgress?.(null, fileId);
+        return { operation_id: null, file_id: fileId };
       }
     } catch { /* fallback to error below */ }
   }
