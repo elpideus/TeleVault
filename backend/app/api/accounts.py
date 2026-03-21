@@ -13,7 +13,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_client_pool, get_current_user, get_db
+from app.core.deps import get_client_pool, get_current_user, get_db, get_upload_worker_pool
+from app.services.upload_queue import UploadWorkerPool
 from app.db.models.telegram_account import TelegramAccount
 from app.db.models.user import User
 from app.schemas.accounts import (
@@ -79,6 +80,21 @@ async def get_primary_account(
     return ta
 
 
+# ─── Upload concurrency ───────────────────────────────────────────────────────
+
+@router.get("/concurrency")
+async def get_upload_concurrency(
+    current_user: User = Depends(get_current_user),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
+):
+    """Return the current number of upload workers for the authenticated user.
+
+    Always >= 1. Used by the frontend to determine how many files to upload
+    in parallel.
+    """
+    return {"concurrency": upload_worker_pool.get_worker_count(current_user.telegram_id)}
+
+
 # ─── Add account: phone/OTP flow ─────────────────────────────────────────────
 
 @router.post("/add/phone", status_code=204)
@@ -97,6 +113,7 @@ async def add_otp(
     pool: ClientPool = Depends(get_client_pool),
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
 ):
     """Submit OTP (and optional 2FA password) to complete alt account login."""
     client = await finish_phone_login(
@@ -110,6 +127,10 @@ async def add_otp(
     )
     await session.commit()
     await pool.add_client(ta.id, session_string, current_user.telegram_id)
+    upload_worker_pool.set_worker_count(
+        current_user.telegram_id,
+        pool.get_active_count(current_user.telegram_id),
+    )
 
     # Enroll in all channels (transient failures returned to caller)
     failures = await enroll_account_in_all_channels(
@@ -136,6 +157,7 @@ async def add_qr_poll(
     pool: ClientPool = Depends(get_client_pool),
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
 ):
     """Poll QR login status. On complete, saves the account and returns it."""
     status, message, client = await poll_qr_login(pool, poll_token, namespace="add_account")
@@ -153,6 +175,10 @@ async def add_qr_poll(
     )
     await session.commit()
     await pool.add_client(ta.id, session_string, current_user.telegram_id)
+    upload_worker_pool.set_worker_count(
+        current_user.telegram_id,
+        pool.get_active_count(current_user.telegram_id),
+    )
 
     failures = await enroll_account_in_all_channels(
         pool, ta.telegram_id, session, current_user.telegram_id
@@ -173,6 +199,7 @@ async def remove_alt_account(
     pool: ClientPool = Depends(get_client_pool),
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
 ):
     """Remove an alt account. Fails with 403 if the account is primary."""
     ta = await session.get(TelegramAccount, account_id)
@@ -192,6 +219,10 @@ async def remove_alt_account(
 
     # Disconnect from pool (in-flight uploads will fail cleanly — documented behavior)
     await pool.remove_client(account_id)
+    upload_worker_pool.set_worker_count(
+        current_user.telegram_id,
+        pool.get_active_count(current_user.telegram_id),
+    )
 
     # Soft delete
     ta.is_active = False
