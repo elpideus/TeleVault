@@ -93,7 +93,7 @@ class Settings(BaseSettings):
                 )
             self.database_url = (
                 f"postgresql+asyncpg://{self.postgres_user}:"
-                f"{self.postgres_password}@db:5432/{self.postgres_db}"
+                f"{self.postgres_password}@127.0.0.1:5432/{self.postgres_db}"
             )
         return self
 
