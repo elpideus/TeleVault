@@ -1,11 +1,9 @@
 import { useState, useCallback, useMemo, useRef } from "react";
 
-// Module-level serial queue — ensures all uploads across any number of
-// handleDrop calls are processed one at a time globally.
-let _uploadQueue: Promise<void> = Promise.resolve();
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { fetchFolders, folderKeys } from "../../api/folders";
 import { springFluid } from "../../lib/springs";
 import { useUIStore } from "../../store/uiStore";
@@ -22,6 +20,8 @@ import { useExplorerActions } from "../../hooks/useExplorerActions";
 import { useSelectionStore } from "../../store/selectionStore";
 import { useLassoSelection } from "../../hooks/useLassoSelection";
 import { toast } from "../../lib/toast";
+import { createSemaphore } from "../../lib/semaphore";
+import { getConcurrency } from "../../api/accounts";
 import { ConfirmModal } from "../../themes/default/components/ConfirmModal";
 import { MoveModal } from "../../themes/default/components/MoveModal";
 import type { FileItem, FolderItem } from "../../types/files";
@@ -53,6 +53,99 @@ import { EmptyState } from "../../themes/default/components/EmptyState";
 import { EmptyAreaContextMenu } from "../../themes/default/components/EmptyAreaContextMenu";
 import { Button, IconButton } from "../../themes/default/components/Button";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+
+/**
+ * Fire-and-forget SSE watcher for a single upload operation.
+ * Handles status updates, query invalidation, and toast notifications
+ * independently of the upload semaphore — Telegram processing runs in
+ * parallel with subsequent XHR uploads.
+ */
+function watchCompletion(
+  opId: string,
+  fileName: string,
+  token: string,
+  queryClient: QueryClient,
+): void {
+  const { updateProgress, setStatus } = useUploadStore.getState();
+  let done = false;
+  let retries = 0;
+  const MAX_RETRIES = 8;
+  let retryDelay = 1000;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let source: EventSource | null = null;
+
+  const cleanup = (unsub?: () => void) => {
+    done = true;
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    source?.close();
+    source = null;
+    unsub?.();
+  };
+
+  // Also watch Zustand store — useUploadSSE in TransferItem may resolve first.
+  const unsub = useUploadStore.subscribe((state) => {
+    if (done) return;
+    const u = state.uploads.get(opId);
+    if (!u || u.status === "complete") {
+      cleanup(unsub);
+      void queryClient.invalidateQueries({ queryKey: fileKeys.all });
+    } else if (u.status === "error" || u.status === "cancelled") {
+      cleanup(unsub);
+    }
+  });
+
+  const connect = () => {
+    if (done) return;
+    source = createProgressSource(opId, token);
+
+    const onMsg = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data as string) as {
+          pct?: number;
+          status?: string;
+          message?: string;
+        };
+        if (typeof data.pct === "number") {
+          updateProgress(opId, Math.min(100, Math.max(0, data.pct)));
+        }
+        if (data.status === "done" || data.status === "complete") {
+          setStatus(opId, "complete");
+          cleanup(unsub);
+          void queryClient.invalidateQueries({ queryKey: fileKeys.all });
+          toast.success(`Uploaded ${fileName}`);
+        } else if (data.status === "error") {
+          const msg = data.message ?? "Upload failed";
+          setStatus(opId, "error", msg);
+          cleanup(unsub);
+          toast.error(`Failed to upload ${fileName}: ${msg}`);
+        }
+      } catch {
+        // Malformed SSE data — ignore
+      }
+    };
+
+    source.addEventListener("progress", onMsg);
+    source.onmessage = onMsg;
+    source.onerror = () => {
+      source?.close();
+      source = null;
+      if (done) return;
+      retries++;
+      if (retries > MAX_RETRIES) {
+        setStatus(opId, "error", "Connection lost");
+        cleanup(unsub);
+        toast.error(`Failed to upload ${fileName}: Connection lost`);
+        return;
+      }
+      retryTimer = setTimeout(() => {
+        retryDelay = Math.min(retryDelay * 2, 16_000);
+        connect();
+      }, retryDelay);
+    };
+  };
+
+  connect();
+}
 
 export function FileExplorer() {
   const { "*": slug = "" } = useParams();
@@ -241,7 +334,8 @@ export function FileExplorer() {
     (files: File[]) => {
       if (!user) return;
 
-      const { addUpload, updateProgress, setStatus, promoteUpload } = useUploadStore.getState();
+      const { addUpload, updateProgress, setStatus, promoteUpload } =
+        useUploadStore.getState();
 
       // Add ALL files to the store immediately as "queued"
       const fileEntries = files.map((file) => ({
@@ -262,136 +356,77 @@ export function FileExplorer() {
         });
       }
 
-      // Chain onto the global queue so uploads from concurrent handleDrop calls
-      // (e.g. drag + button) never run in parallel.
-      _uploadQueue = _uploadQueue.then(async () => {
-        for (const { file, tempId } of fileEntries) {
-          setStatus(tempId, "hashing");
+      // Kick off concurrent uploads — N slots, one per connected account.
+      void (async () => {
+        let n = 1;
+        try {
+          const result = await getConcurrency();
+          n = Math.max(1, result.concurrency);
+        } catch {
+          // Network error — fall back to serial (1 slot)
+        }
 
-          let realOperationId: string | null = null;
-          try {
-            await uploadFile(
-              file,
-              isRoot ? null : slug,
-              (operationId, fileId) => {
-                realOperationId = operationId;
-                if (operationId) {
-                  promoteUpload(tempId, operationId, fileId);
-                  setStatus(operationId, "processing");
-                } else {
-                  // Duplicate file — already exists
-                  updateProgress(tempId, 100);
-                  setStatus(tempId, "complete", undefined, true);
-                }
-              },
-              (progress) => updateProgress(tempId, progress),
-              (progress) => {
-                setStatus(tempId, "uploading");
-                updateProgress(tempId, progress);
-              },
-            );
+        const sem = createSemaphore(n);
+        const token = useAuthStore.getState().accessToken ?? "";
 
-            // Wait for the server-to-Telegram phase using a dedicated SSE
-            // connection owned by the queue — independent of whether the
-            // transfer tray is open and TransferItem is mounted.
+        await Promise.allSettled(
+          fileEntries.map(async ({ file, tempId }) => {
+            await sem.acquire();
+
+            setStatus(tempId, "hashing");
+            let realOperationId: string | null = null;
+
+            try {
+              await uploadFile(
+                file,
+                isRoot ? null : slug,
+                (operationId, fileId) => {
+                  realOperationId = operationId;
+                  if (operationId) {
+                    promoteUpload(tempId, operationId, fileId);
+                    setStatus(operationId, "processing");
+                  } else {
+                    // Duplicate — already exists on server
+                    updateProgress(tempId, 100);
+                    setStatus(tempId, "complete", undefined, true);
+                  }
+                },
+                (progress) => updateProgress(tempId, progress),
+                (progress) => {
+                  setStatus(tempId, "uploading");
+                  updateProgress(tempId, progress);
+                },
+              );
+            } catch (err) {
+              sem.release();
+              if ((err as Error).message !== "Upload cancelled") {
+                const opId = realOperationId ?? tempId;
+                setStatus(opId, "error", (err as Error).message);
+                toast.error(`Failed to upload ${file.name}: ${(err as Error).message}`);
+              }
+              return;
+            }
+
+            // XHR bytes are on the server — release the slot so the next file
+            // can start uploading while Telegram processing runs in the background.
+            sem.release();
+
+            // Watch Telegram processing independently (fire-and-forget).
             if (realOperationId) {
-              const opId = realOperationId;
-
-              // Immediate check — SSE "done" may have already arrived.
-              const immediateState = useUploadStore.getState().uploads.get(opId);
-              if (immediateState?.status !== "complete") {
-                if (immediateState?.status === "error") {
-                  throw new Error(immediateState.error ?? "Upload failed");
-                }
-                await new Promise<void>((resolve, reject) => {
-                  let queueSource: EventSource | null = createProgressSource(opId, useAuthStore.getState().accessToken ?? "");
-                  let queueRetries = 0;
-                  const MAX_QUEUE_RETRIES = 8;
-                  let queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
-                  let queueRetryDelay = 1000;
-                  let done = false;
-
-                  const cleanupQueue = (unsub?: () => void) => {
-                    done = true;
-                    if (queueRetryTimer !== null) clearTimeout(queueRetryTimer);
-                    queueSource?.close();
-                    queueSource = null;
-                    unsub?.();
-                  };
-
-                  // Watch the Zustand store too — TransferItem SSE may resolve first.
-                  const unsub = useUploadStore.subscribe((state) => {
-                    if (done) return;
-                    const u = state.uploads.get(opId);
-                    if (!u || u.status === "complete") { 
-                      cleanupQueue(unsub); 
-                      resolve(); 
-                    } else if (u.status === "error") { 
-                      cleanupQueue(unsub); 
-                      reject(new Error(u.error ?? "Upload failed")); 
-                    } else if (u.status === "cancelled") {
-                      cleanupQueue(unsub);
-                      reject(new Error("Upload cancelled"));
-                    }
-                  });
-
-                  const attachQueueHandlers = (src: EventSource) => {
-                    const onMsg = (e: MessageEvent) => {
-                      try {
-                        const data = JSON.parse(e.data as string) as { pct?: number; status?: string; message?: string };
-                        if (typeof data.pct === "number") {
-                          updateProgress(opId, Math.min(100, Math.max(0, data.pct)));
-                        }
-                        if (data.status === "done" || data.status === "complete") {
-                          setStatus(opId, "complete");
-                          cleanupQueue(unsub);
-                          resolve();
-                        } else if (data.status === "error") {
-                          const msg = data.message ?? "Upload failed";
-                          setStatus(opId, "error", msg);
-                          cleanupQueue(unsub);
-                          reject(new Error(msg));
-                        }
-                      } catch { /* ignore malformed */ }
-                    };
-                    src.addEventListener("progress", onMsg);
-                    src.onmessage = onMsg;
-                    src.onerror = () => {
-                      src.close();
-                      if (done) return;
-                      queueRetries++;
-                      if (queueRetries > MAX_QUEUE_RETRIES) {
-                        setStatus(opId, "error", "Connection lost");
-                        cleanupQueue(unsub);
-                        reject(new Error("Connection lost"));
-                        return;
-                      }
-                      queueRetryTimer = setTimeout(() => {
-                        queueRetryDelay = Math.min(queueRetryDelay * 2, 16_000);
-                        if (!done) {
-                          queueSource = createProgressSource(opId, useAuthStore.getState().accessToken ?? "");
-                          attachQueueHandlers(queueSource);
-                        }
-                      }, queueRetryDelay);
-                    };
-                  };
-                  attachQueueHandlers(queueSource);
-                });
+              // Check if already complete (SSE may have arrived during XHR).
+              const immediateState = useUploadStore
+                .getState()
+                .uploads.get(realOperationId);
+              if (immediateState?.status === "complete") {
+                void queryClient.invalidateQueries({ queryKey: fileKeys.all });
+                toast.success(`Uploaded ${file.name}`);
+              } else if (immediateState?.status !== "error") {
+                watchCompletion(realOperationId, file.name, token, queryClient);
               }
             }
-
-            void queryClient.invalidateQueries({ queryKey: fileKeys.all });
-            toast.success(`Uploaded ${file.name}`);
-          } catch (err: any) {
-            if (err.message !== "Upload cancelled") {
-              console.error("Upload failed:", err);
-              const opId = realOperationId ?? tempId;
-              setStatus(opId, "error", (err as Error).message);
-              toast.error(`Failed to upload ${file.name}: ${(err as Error).message}`);
-            }
-          }
-        }
-      });
+          }),
+        );
+      })();
     },
     [slug, isRoot, user, queryClient],
   );
