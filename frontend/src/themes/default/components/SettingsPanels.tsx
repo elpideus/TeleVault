@@ -579,7 +579,7 @@ export function AboutPanel() {
               margin: 0,
             }}
           >
-            Version 1.0.9
+            Version 1.0.10
           </p>
           <p
             style={{

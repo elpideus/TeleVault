@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     debug_ui: bool = False
     api_port: int = 8000
     upload_chunk_size: int = 5 * 1024 * 1024  # 5 MB — stays well under Cloudflare's 100s timeout
+    upload_max_parallel_chunks: int = 4  # number of chunks uploaded concurrently by the client
 
     @field_validator("cors_origins", mode="before")
     @classmethod

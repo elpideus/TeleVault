@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.10] - 2026-03-21
+
+### Added
+
+- Configurable `UPLOAD_MAX_PARALLEL_CHUNKS` environment variable (default: `4`): controls how many 5 MB chunks the browser uploads simultaneously, allowing throughput to be tuned without changing the per-request size
+- Backend now returns `max_parallel_chunks` in the `/upload/initialize` response so the frontend automatically respects the server-configured value
+
+### Fixed
+
+- Chunked upload 524 timeout: reduced default `UPLOAD_CHUNK_SIZE` from 90 MB to 5 MB so every single chunk request completes well within Cloudflare's 100-second connection timeout even on slow links
+- Blocking event-loop I/O in chunk handler: the `upload_chunk` endpoint previously called `f.write()` synchronously inside an `async` function, stalling the event loop during disk writes; writes are now dispatched to a thread via `asyncio.to_thread`
+- Parallel chunk writes landing at wrong offsets: the temporary file is now pre-allocated to its full size at `initialize` time, and each chunk is written at `chunk_index × chunk_size` using `f.seek()` instead of appending, ensuring correctness when multiple chunks arrive out of order
+
+---
+
 ## [1.0.9] - 2026-03-21
 
 ### Fixed
