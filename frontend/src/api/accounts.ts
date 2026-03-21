@@ -59,7 +59,7 @@ export async function startPhoneLogin(phone: string): Promise<void> {
     },
     body: JSON.stringify({ phone }),
   });
-  if (!res.ok) throw new Error(`startPhoneLogin failed: ${res.status}`);
+  if (!res.ok) throw await res.json();
 }
 
 export async function submitOtp(
@@ -76,7 +76,7 @@ export async function submitOtp(
     },
     body: JSON.stringify({ phone, code, password }),
   });
-  if (!res.ok) throw new Error(`submitOtp failed: ${res.status}`);
+  if (!res.ok) throw await res.json();
   return res.json();
 }
 
