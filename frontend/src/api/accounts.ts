@@ -111,3 +111,12 @@ export async function removeAltAccount(account_id: string): Promise<void> {
   });
   if (!res.ok) throw new Error(`removeAltAccount failed: ${res.status}`);
 }
+
+export async function getConcurrency(): Promise<{ concurrency: number }> {
+  const baseUrl = getBaseUrl();
+  const res = await fetch(`${baseUrl}/api/v1/accounts/concurrency`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) throw new Error(`getConcurrency failed: ${res.status}`);
+  return res.json();
+}
