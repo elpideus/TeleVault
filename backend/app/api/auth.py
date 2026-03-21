@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import uuid
 
 import io
 
@@ -10,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import create_access_token, verify_token_hash
+from app.core.auth import create_access_token
 from app.core.config import get_settings
 from app.core.deps import get_client_pool, get_current_user, get_db
 from app.db.models.refresh_token import RefreshToken
@@ -19,7 +17,6 @@ from app.schemas.auth import (
     OTPSubmitIn,
     PhoneLoginIn,
     RefreshIn,
-    TelegramAccountOut,
     TokenOut,
     UserOut,
 )
@@ -30,11 +27,14 @@ from app.services.auth import (
     store_telegram_account,
     upsert_user,
 )
-from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
-from telethon.sessions import StringSession
+from app.services.telegram_login import (
+    start_phone_login as _start_phone_login,
+    finish_phone_login as _finish_phone_login,
+    start_qr_login as _start_qr_login,
+    poll_qr_login as _poll_qr_login,
+)
 
-from app.telegram.client_pool import ClientPool, PendingPhoneLogin, PendingQRLogin
+from app.telegram.client_pool import ClientPool
 
 logger = logging.getLogger(__name__)
 
@@ -65,35 +65,8 @@ async def phone_login(
     body: PhoneLoginIn,
     pool: ClientPool = Depends(get_client_pool),
 ):
-    settings = get_settings()
-
-    client = TelegramClient(
-        StringSession(),
-        settings.telegram_api_id,
-        settings.telegram_api_hash,
-    )
-    try:
-        await client.connect()
-        sent_code = await client.send_code_request(body.phone)
-    except Exception as exc:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "TELEGRAM_ERROR", "message": str(exc), "detail": None},
-        ) from exc
-
-    pool._pending_phone[body.phone] = PendingPhoneLogin(
-        phone=body.phone,
-        phone_code_hash=sent_code.phone_code_hash,
-        client=client,
-    )
-
-    code_type = _CODE_TYPE_MAP.get(type(sent_code.type).__name__, "UNKNOWN")
-    logger.info("OTP sent to %s via %s", body.phone, code_type)
-    return {"message": "OTP sent", "code_type": code_type}
+    result = await _start_phone_login(pool, body.phone, namespace="primary")
+    return result
 
 
 @router.post("/otp", response_model=TokenOut)
@@ -102,50 +75,15 @@ async def otp_submit(
     pool: ClientPool = Depends(get_client_pool),
     session: AsyncSession = Depends(get_db),
 ):
-    pending = pool._pending_phone.pop(body.phone, None)
-    if pending is None:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "NO_PENDING_LOGIN", "message": "No pending phone login for this number.", "detail": None},
-        )
-
-    client = pending.client
-    try:
-        try:
-            signed_in = await client.sign_in(
-                body.phone, body.code, phone_code_hash=pending.phone_code_hash
-            )
-        except SessionPasswordNeededError:
-            if body.password is None:
-                pool._pending_phone[body.phone] = pending
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": "PASSWORD_REQUIRED", "message": "Two-factor authentication password required.", "detail": None},
-                )
-            signed_in = await client.sign_in(password=body.password)
-
-        me = signed_in if hasattr(signed_in, "id") else await client.get_me()
-        settings = get_settings()
-
-        user = await upsert_user(session, me)
-        await admin_auto_set(session, settings, user.telegram_id)
-        await store_telegram_account(session, pool, user.telegram_id, client)
-        raw_refresh = await create_refresh_token(session, user.telegram_id)
-        access = create_access_token(user.telegram_id, user.role)
-
-        return _make_token_out(access, raw_refresh, user.vault_hash)
-
-    except HTTPException:
-        raise
-    except Exception as exc:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "TELEGRAM_ERROR", "message": str(exc), "detail": None},
-        ) from exc
+    client = await _finish_phone_login(pool, body.phone, body.code, body.password, namespace="primary")
+    me = await client.get_me()
+    settings = get_settings()
+    user = await upsert_user(session, me)
+    await admin_auto_set(session, settings, user.telegram_id)
+    ta, _ = await store_telegram_account(session, pool, user.telegram_id, client, is_primary=True)
+    raw_refresh = await create_refresh_token(session, user.telegram_id)
+    access = create_access_token(user.telegram_id, user.role)
+    return _make_token_out(access, raw_refresh, user.vault_hash)
 
 
 # ---------- QR login ----------
@@ -155,45 +93,7 @@ async def otp_submit(
 async def qr_init(
     pool: ClientPool = Depends(get_client_pool),
 ):
-    settings = get_settings()
-    poll_token = uuid.uuid4().hex
-
-    client = TelegramClient(
-        StringSession(),
-        settings.telegram_api_id,
-        settings.telegram_api_hash,
-    )
-    try:
-        await client.connect()
-        qr_login = await client.qr_login()
-    except Exception as exc:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "TELEGRAM_ERROR", "message": str(exc), "detail": None},
-        ) from exc
-
-    async def _wait_qr():
-        try:
-            return await qr_login.wait(timeout=120)
-        except asyncio.TimeoutError:
-            pool._pending_qr.pop(poll_token, None)
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-            return None
-
-    task = asyncio.create_task(_wait_qr())
-    pool._pending_qr[poll_token] = PendingQRLogin(
-        client=client,
-        qr_login=qr_login,
-        task=task,
-    )
-    return {"qr_url": qr_login.url, "poll_token": poll_token}
+    return await _start_qr_login(pool, namespace="primary")
 
 
 @router.get("/qr/poll")
@@ -202,46 +102,22 @@ async def qr_poll(
     pool: ClientPool = Depends(get_client_pool),
     session: AsyncSession = Depends(get_db),
 ):
-    pending = pool._pending_qr.get(poll_token)
-    if pending is None:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "INVALID_POLL_TOKEN", "message": "No pending QR login for this token.", "detail": None},
-        )
+    from starlette.responses import JSONResponse
 
-    task = pending.task
-    if not task.done():
-        from starlette.responses import JSONResponse
-        return JSONResponse(
-            status_code=202,
-            content={"message": "QR login pending"},
-        )
+    status, message, client = await _poll_qr_login(pool, poll_token, namespace="primary")
 
-    pool._pending_qr.pop(poll_token, None)
+    if status == "pending":
+        return JSONResponse(status_code=202, content={"message": "QR login pending"})
+    if status == "error":
+        raise HTTPException(status_code=400, detail={"error": "QR_ERROR", "message": message, "detail": None})
 
-    if task.cancelled():
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "QR_CANCELLED", "message": "QR login was cancelled.", "detail": None},
-        )
-
-    exc = task.exception()
-    if exc is not None:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "QR_ERROR", "message": str(exc), "detail": None},
-        )
-
-    client = pending.client
     me = await client.get_me()
     settings = get_settings()
-
     user = await upsert_user(session, me)
     await admin_auto_set(session, settings, user.telegram_id)
-    await store_telegram_account(session, pool, user.telegram_id, client)
+    ta, _ = await store_telegram_account(session, pool, user.telegram_id, client, is_primary=True)
     raw_refresh = await create_refresh_token(session, user.telegram_id)
     access = create_access_token(user.telegram_id, user.role)
-
     return _make_token_out(access, raw_refresh, user.vault_hash)
 
 
@@ -333,20 +209,6 @@ async def me(
         vault_hash=current_user.vault_hash,
     )
 
-
-@router.get("/accounts", response_model=list[TelegramAccountOut])
-async def list_accounts(
-    session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    from sqlalchemy import select
-    from app.db.models.telegram_account import TelegramAccount
-    result = await session.scalars(
-        select(TelegramAccount).where(
-            TelegramAccount.owner_telegram_id == current_user.telegram_id
-        )
-    )
-    return list(result.all())
 
 
 @router.get("/me/photo")

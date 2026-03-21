@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -9,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.accounts import router as accounts_router
 from app.api.auth import router as auth_router
 from app.api.debug import router as debug_router
 from app.api.channels import router as channels_router
@@ -63,6 +65,7 @@ async def lifespan(app: FastAPI):
     setup_logging()
     async with AsyncSessionLocal() as session:
         await client_pool.initialize(session)
+    asyncio.create_task(client_pool.start_health_check_loop(AsyncSessionLocal))
     await _cleanup_stale_uploads()
     logger.info("TeleVault API is ready")
     yield
@@ -81,6 +84,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    application.include_router(accounts_router)
     application.include_router(auth_router)
     application.include_router(channels_router)
     application.include_router(dialogs_router)

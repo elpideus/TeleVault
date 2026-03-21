@@ -38,6 +38,7 @@ class ClientPool:
         self._owners: dict[uuid.UUID, int] = {}  # account_id -> owner_telegram_id
         self._pending_phone: dict[str, PendingPhoneLogin] = {}
         self._pending_qr: dict[str, PendingQRLogin] = {}
+        self._rr_index: dict[int, int] = {}  # owner_telegram_id → next index
 
     async def initialize(self, session: AsyncSession) -> None:
         settings = get_settings()
@@ -110,6 +111,103 @@ class ClientPool:
             self._owners[account_id] = owner_telegram_id
         logger.info("Added Telegram account %s to pool", account_id)
         return client
+
+    def get_all_clients_for_user(
+        self, owner_telegram_id: int
+    ) -> list[tuple[uuid.UUID, "TelegramClient"]]:
+        """Return all active (account_id, client) pairs for a user.
+
+        Used by execute_upload to build a snapshot at upload start.
+        """
+        return [
+            (account_id, self._clients[account_id])
+            for account_id, owner_id in self._owners.items()
+            if owner_id == owner_telegram_id and account_id in self._clients
+        ]
+
+    def get_next_client_round_robin(
+        self, owner_telegram_id: int
+    ) -> tuple[uuid.UUID, "TelegramClient"]:
+        """Return the next client in round-robin order for non-upload callers.
+
+        Safe in single-process asyncio: the increment is one synchronous statement
+        with no await between read and write.
+        """
+        clients = self.get_all_clients_for_user(owner_telegram_id)
+        if not clients:
+            raise RuntimeError("No active Telegram client for user")
+        idx = self._rr_index.get(owner_telegram_id, 0)
+        self._rr_index[owner_telegram_id] = idx + 1  # ever-increasing; modulo applied at read
+        return clients[idx % len(clients)]
+
+    async def start_health_check_loop(self, session_factory) -> None:
+        """Run every 30 minutes. Re-connects dropped clients, marks revoked sessions inactive."""
+        from telethon.errors import (
+            AuthKeyUnregisteredError,
+            AuthKeyDuplicatedError,
+            UserDeactivatedError,
+            UserDeactivatedBanError,
+        )
+
+        _AUTH_ERRORS = (
+            AuthKeyUnregisteredError,
+            AuthKeyDuplicatedError,
+            UserDeactivatedError,
+            UserDeactivatedBanError,
+        )
+
+        while True:
+            await asyncio.sleep(30 * 60)  # 30 minutes
+            logger.info("Running Telegram account health check (%d clients)", len(self._clients))
+
+            settings = get_settings()
+            # Snapshot to avoid mutation during iteration
+            account_ids = list(self._clients.keys())
+
+            for account_id in account_ids:
+                client = self._clients.get(account_id)
+                if client is None:
+                    continue
+
+                # 1. Reconnect if TCP connection dropped
+                if not client.is_connected():
+                    logger.info("Account %s disconnected — reconnecting", account_id)
+                    try:
+                        await client.connect()
+                    except Exception:
+                        logger.exception("Reconnect failed for account %s", account_id)
+                        continue
+
+                # 2. Verify session is still valid
+                try:
+                    await client.get_me()
+
+                    async with session_factory() as db:
+                        ta = await db.get(TelegramAccount, account_id)
+                        if ta is not None:
+                            from datetime import datetime
+                            ta.last_checked_at = datetime.utcnow()
+                            ta.session_error = None
+                            await db.commit()
+
+                except _AUTH_ERRORS as exc:
+                    logger.warning("Account %s session revoked: %s", account_id, exc)
+                    async with session_factory() as db:
+                        ta = await db.get(TelegramAccount, account_id)
+                        if ta is not None:
+                            ta.is_active = False
+                            ta.session_error = str(exc)
+                            await db.commit()
+                    self._clients.pop(account_id, None)
+                    self._owners.pop(account_id, None)
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+
+                except Exception:
+                    # Network error, flood wait, etc. — skip, retry next cycle
+                    logger.warning("Health check ping failed for account %s (will retry)", account_id, exc_info=True)
 
     async def remove_client(self, account_id: uuid.UUID) -> None:
         client = self._clients.pop(account_id, None)

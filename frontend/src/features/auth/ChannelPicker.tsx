@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { authKeys, listAccounts } from "../../api/auth";
+import { accountsKeys, getPrimaryAccount } from "../../api/accounts";
 import { dialogKeys, listDialogs } from "../../api/dialogs";
 import { channelKeys, createChannel, setDefaultChannel, createTelegramChannel } from "../../api/channels";
 import type { ChannelIn } from "../../api/schema";
@@ -18,12 +18,12 @@ export function ChannelPicker({ onDone, onCancel }: ChannelPickerProps) {
   const [title, setTitle] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const { data: accounts, isLoading: accountsLoading } = useQuery({
-    queryKey: authKeys.accounts,
-    queryFn: listAccounts,
+  const { data: primaryAccount, isLoading: accountsLoading } = useQuery({
+    queryKey: accountsKeys.primary,
+    queryFn: getPrimaryAccount,
   });
 
-  const accountId = accounts?.[0]?.id;
+  const accountId = primaryAccount?.id;
 
   const { data: dialogsData, isLoading: dialogsLoading } = useQuery({
     queryKey: dialogKeys.byAccount(accountId ?? ""),
