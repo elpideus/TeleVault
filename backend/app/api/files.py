@@ -169,10 +169,23 @@ async def check_hash(
 @router.post("/upload", status_code=202, response_model=FileUploadOut)
 async def upload_file(
     request: Request,
-    session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
     pool: ClientPool = Depends(get_client_pool),
 ):
+    from app.core.auth import decode_access_token, AuthError
+    from app.db.session import AsyncSessionLocal
+    import urllib.parse
+    
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = auth_header.split(" ")[1]
+    
+    try:
+        payload = decode_access_token(token)
+        owner_id = int(payload["sub"])
+    except AuthError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
     # Stream the multipart body straight to a temp file — never holds the
     # entire file in RAM regardless of size.
     # NOTE: tmp_path cleanup is delegated to execute_upload (background task).
@@ -227,31 +240,38 @@ async def upload_file(
         total_size_raw = total_size_target.value.decode() if total_size_target.value else None
         total_size = int(total_size_raw) if total_size_raw else os.path.getsize(tmp_path)
 
-        # Resolve folder from slug (optional — None means root)
-        if folder_slug:
-            folder = await folders_svc.get_folder_by_slug(
-                session, current_user.telegram_id, folder_slug
+        # Open a short-lived DB session AFTER streaming is completely finished.
+        async with AsyncSessionLocal() as session:
+            # Verify user exists
+            user = await session.get(User, owner_id)
+            if not user:
+                raise HTTPException(status_code=401, detail="User not found")
+                
+            # Resolve folder from slug (optional — None means root)
+            if folder_slug:
+                folder = await folders_svc.get_folder_by_slug(
+                    session, owner_id, folder_slug
+                )
+            else:
+                folder = None
+
+            # Resolve channel
+            channel = await upload_svc.resolve_channel(
+                session, owner_id, channel_id, folder
             )
-        else:
-            folder = None
 
-        # Resolve channel
-        channel = await upload_svc.resolve_channel(
-            session, current_user.telegram_id, channel_id, folder
-        )
-
-        # Validate + create operation — fast, no Telegram I/O yet.
-        operation_id, file_id, split_count, channel_record = await upload_svc.prepare_upload(
-            session=session,
-            registry=operation_registry,
-            owner_id=current_user.telegram_id,
-            folder_id=folder.id if folder else None,
-            channel_id=channel.id,
-            filename=filename,
-            mime_type=mime_type,
-            total_size=total_size,
-            file_hash=file_hash,
-        )
+            # Validate + create operation — fast, no Telegram I/O yet.
+            operation_id, file_id, split_count, channel_record = await upload_svc.prepare_upload(
+                session=session,
+                registry=operation_registry,
+                owner_id=owner_id,
+                folder_id=folder.id if folder else None,
+                channel_id=channel.id,
+                filename=filename,
+                mime_type=mime_type,
+                total_size=total_size,
+                file_hash=file_hash,
+            )
 
     except Exception:
         # Only clean up here on validation error — on success the background
@@ -271,7 +291,7 @@ async def upload_file(
         pool=pool,
         operation_id=operation_id,
         file_id=file_id,
-        owner_id=current_user.telegram_id,
+        owner_id=owner_id,
         folder_id=folder.id if folder else None,
         channel=channel_record,
         filename=filename,

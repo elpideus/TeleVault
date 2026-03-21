@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.8] - 2026-03-21
+## [1.0.9] - 2026-03-21
 
 ### Fixed
 
-- Backend 524 Timeout: added a 1-second delay at the start of the background Telegram upload task to ensure FastAPI/Uvicorn can flush the HTTP 202 response to Cloudflare before the event loop is throttled by Telethon encryption and IO.
+- Backend 524 Timeout (Database connection exhaustion): refactored the `/upload` endpoint to authenticate and process the request stream *without* holding an active database session. Database connections are now acquired only after the upload has landed in temporary storage, preventing pool exhaustion during concurrent or slow transfers.
+
+---
+
+## [1.0.8] - 2026-03-21
 - Frontend 401 Duplicate Check: refactored the `check-hash` duplicate check to use the standard `apiClient`, inheriting automatic token refresh logic if the session expires during a long upload queue.
 
 ---
@@ -114,6 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VITE_THEME` build argument for UI theme selection
 - `ADMIN_TELEGRAM_ID` environment variable for automatic admin promotion on first login
 
+[1.0.9]: https://github.com/elpideus/TeleVault/compare/v1.0.8...v1.0.9
+[1.0.8]: https://github.com/elpideus/TeleVault/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/elpideus/TeleVault/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/elpideus/TeleVault/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/elpideus/TeleVault/compare/v1.0.4...v1.0.5
