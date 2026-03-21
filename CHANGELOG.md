@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.6] - 2026-03-21
+
+### Fixed
+
+- Large file uploads stalling at "Uploading (TeleVault)... 0%": the XHR upload to the server now refreshes the access token and retries automatically if the token expires mid-upload (relevant for files that take longer than 30 minutes to transfer)
+- SSE progress stream reconnecting with a stale token after transient connection drops: the upload queue and transfer tray now always read the latest token from the auth store on each reconnect attempt rather than reusing the token captured at connection time
+
+---
+
 ## [1.0.5] - 2026-03-21
 
 ### Fixed
@@ -80,7 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VITE_THEME` build argument for UI theme selection
 - `ADMIN_TELEGRAM_ID` environment variable for automatic admin promotion on first login
 
-[Unreleased]: https://github.com/elpideus/TeleVault/compare/v1.0.4...HEAD
+[1.0.6]: https://github.com/elpideus/TeleVault/compare/v1.0.5...v1.0.6
+[1.0.5]: https://github.com/elpideus/TeleVault/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/elpideus/TeleVault/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/elpideus/TeleVault/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/elpideus/TeleVault/compare/v1.0.1...v1.0.2
