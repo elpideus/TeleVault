@@ -31,13 +31,19 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
     set({ uploads: next });
   },
   promoteUpload: (tempId, realId, fileId) => {
-    const next = new Map(get().uploads);
-    const existing = next.get(tempId);
+    const current = get().uploads;
+    const existing = current.get(tempId);
     if (existing) {
-      next.delete(tempId);
-      next.set(realId, { ...existing, operationId: realId, fileId });
+      const next = new Map<string, UploadState>();
+      for (const [key, value] of current.entries()) {
+        if (key === tempId) {
+          next.set(realId, { ...existing, operationId: realId, fileId });
+        } else {
+          next.set(key, value);
+        }
+      }
+      set({ uploads: next });
     }
-    set({ uploads: next });
   },
   updateProgress: (operationId, progress) => {
     const next = new Map(get().uploads);
