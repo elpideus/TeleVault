@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -63,6 +64,7 @@ async def lifespan(app: FastAPI):
     setup_logging()
     async with AsyncSessionLocal() as session:
         await client_pool.initialize(session)
+    asyncio.create_task(client_pool.start_health_check_loop(AsyncSessionLocal))
     await _cleanup_stale_uploads()
     logger.info("TeleVault API is ready")
     yield
