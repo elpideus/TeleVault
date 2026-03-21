@@ -65,10 +65,12 @@ async def upsert_user(session: AsyncSession, me: "TelegramClient") -> User:
 
 async def store_telegram_account(
     session: AsyncSession,
-    pool: ClientPool,
+    pool: "ClientPool",
     owner_telegram_id: int,
     account: "TelegramClient",
-) -> TelegramAccount:
+    is_primary: bool = False,
+    add_to_pool: bool = True,
+) -> tuple["TelegramAccount", str]:
     settings = get_settings()
     session_string = account.session.save()
     encrypted = encrypt_string(session_string, settings.encryption_key)
@@ -89,15 +91,18 @@ async def store_telegram_account(
             session_string=encrypted,
             label=me.first_name,
             is_active=True,
+            is_primary=is_primary,
         )
         session.add(ta)
     else:
         ta.session_string = encrypted
         ta.is_active = True
+        # Do NOT overwrite is_primary — set once at creation
     await session.flush()
 
-    await pool.add_client(ta.id, session_string, owner_telegram_id)
-    return ta
+    if add_to_pool:
+        await pool.add_client(ta.id, session_string, owner_telegram_id)
+    return ta, session_string
 
 
 async def create_refresh_token(
