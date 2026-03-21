@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.8] - 2026-03-21
+
+### Fixed
+
+- Backend 524 Timeout: added a 1-second delay at the start of the background Telegram upload task to ensure FastAPI/Uvicorn can flush the HTTP 202 response to Cloudflare before the event loop is throttled by Telethon encryption and IO.
+- Frontend 401 Duplicate Check: refactored the `check-hash` duplicate check to use the standard `apiClient`, inheriting automatic token refresh logic if the session expires during a long upload queue.
+
+---
+
 ## [1.0.7] - 2026-03-21
 
 ### Added

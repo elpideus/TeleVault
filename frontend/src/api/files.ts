@@ -134,39 +134,27 @@ export async function uploadFile(
   });
 
   // 2. Pre-check for duplicate before uploading the full file
-  const checkRes = await fetch(`${baseUrl}/api/v1/files/check-hash`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ file_hash: hash }),
+  const { error: checkError, response: checkRes } = await apiClient.POST("/api/v1/files/check-hash" as any, {
+    body: { file_hash: hash },
   });
 
-  if (checkRes.status === 409) {
-    try {
-      const errBody = await checkRes.json();
-      if (errBody.detail?.error === "DUPLICATE_FILE" && errBody.detail?.detail?.file_id) {
-        // Already exists — fake a success response and return immediately
-        const fileId = errBody.detail.detail.file_id;
-        onUploadProgress?.(100);
-        onProgress?.(null, fileId);
-        return { operation_id: null, file_id: fileId };
-      }
-    } catch { /* fallback to error below */ }
+  if (checkRes.status === 409 && checkError) {
+    const errBody = checkError as any;
+    if (errBody.detail?.error === "DUPLICATE_FILE" && errBody.detail?.detail?.file_id) {
+      // Already exists — fake a success response and return immediately
+      const fileId = errBody.detail.detail.file_id;
+      onUploadProgress?.(100);
+      onProgress?.(null, fileId);
+      return { operation_id: null, file_id: fileId };
+    }
   }
 
   if (!checkRes.ok) {
     let errMsg = "Duplicate check failed";
-    try {
-      const raw = await checkRes.text();
-      try {
-        const errBody = JSON.parse(raw);
-        errMsg = errBody.detail?.message || errBody.detail || JSON.stringify(errBody);
-      } catch {
-        errMsg = raw;
-      }
-    } catch { /* ignore */ }
+    if (checkError) {
+      const errBody = checkError as any;
+      errMsg = errBody.detail?.message || errBody.detail || JSON.stringify(errBody);
+    }
     throw new Error(`Upload failed: ${checkRes.status} ${errMsg}`);
   }
 
