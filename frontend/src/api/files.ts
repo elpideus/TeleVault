@@ -165,41 +165,73 @@ export async function uploadFile(
   }
   form.append("file_hash", hash);
 
-  const data = await new Promise<{ operation_id: string; file_id: string }>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${baseUrl}/api/v1/files/upload`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+  const doXhr = (authToken: string) =>
+    new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${baseUrl}/api/v1/files/upload`);
+      xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        onUploadProgress?.(Math.round((e.loaded / e.total) * 100));
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          resolve(JSON.parse(xhr.responseText));
-        } catch {
-          reject(new Error("Invalid response from server"));
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onUploadProgress?.(Math.round((e.loaded / e.total) * 100));
         }
-      } else {
-        let errMsg = "Upload failed";
-        try {
-          const errBody = JSON.parse(xhr.responseText);
-          errMsg = errBody.detail?.message || errBody.detail || JSON.stringify(errBody);
-        } catch {
-          errMsg = xhr.responseText || errMsg;
+      };
+
+      xhr.onload = () => resolve({ status: xhr.status, body: xhr.responseText });
+      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.ontimeout = () => reject(new Error("Upload timed out"));
+
+      xhr.send(form);
+    });
+
+  let xhrResult = await doXhr(token);
+
+  // If the token expired during the (potentially very long) upload, refresh and retry once.
+  if (xhrResult.status === 401) {
+    const { refreshToken, setTokens, logout } = useAuthStore.getState();
+    if (refreshToken) {
+      try {
+        const refreshRes = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (refreshRes.ok) {
+          const { access_token, refresh_token } = (await refreshRes.json()) as {
+            access_token: string;
+            refresh_token: string;
+          };
+          setTokens(access_token, refresh_token);
+          xhrResult = await doXhr(access_token);
         }
-        reject(new Error(`Upload failed: ${xhr.status} ${errMsg}`));
+      } catch {
+        // If refresh fails, fall through to the error below
       }
-    };
+    }
+    if (xhrResult.status === 401) {
+      logout();
+      throw new Error("Upload failed: session expired");
+    }
+  }
 
-    xhr.onerror = () => reject(new Error("Network error during upload"));
-    xhr.ontimeout = () => reject(new Error("Upload timed out"));
-
-    xhr.send(form);
-  });
+  const data = await ((): { operation_id: string; file_id: string } => {
+    if (xhrResult.status >= 200 && xhrResult.status < 300) {
+      try {
+        return JSON.parse(xhrResult.body);
+      } catch {
+        throw new Error("Invalid response from server");
+      }
+    } else {
+      let errMsg = "Upload failed";
+      try {
+        const errBody = JSON.parse(xhrResult.body);
+        errMsg = errBody.detail?.message || errBody.detail || JSON.stringify(errBody);
+      } catch {
+        errMsg = xhrResult.body || errMsg;
+      }
+      throw new Error(`Upload failed: ${xhrResult.status} ${errMsg}`);
+    }
+  })();
 
   onProgress?.(data.operation_id, data.file_id);
   return data;

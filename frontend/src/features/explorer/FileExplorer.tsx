@@ -298,8 +298,7 @@ export function FileExplorer() {
                   throw new Error(immediateState.error ?? "Upload failed");
                 }
                 await new Promise<void>((resolve, reject) => {
-                  const token = useAuthStore.getState().accessToken ?? "";
-                  let queueSource: EventSource | null = createProgressSource(opId, token);
+                  let queueSource: EventSource | null = createProgressSource(opId, useAuthStore.getState().accessToken ?? "");
                   let queueRetries = 0;
                   const MAX_QUEUE_RETRIES = 8;
                   let queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -356,7 +355,7 @@ export function FileExplorer() {
                       queueRetryTimer = setTimeout(() => {
                         queueRetryDelay = Math.min(queueRetryDelay * 2, 16_000);
                         if (!done) {
-                          queueSource = createProgressSource(opId, token);
+                          queueSource = createProgressSource(opId, useAuthStore.getState().accessToken ?? "");
                           attachQueueHandlers(queueSource);
                         }
                       }, queueRetryDelay);
