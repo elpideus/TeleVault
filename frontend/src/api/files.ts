@@ -171,22 +171,41 @@ export async function uploadFile(
   }
 
   // 3. Choose upload strategy: direct (small) or chunked (large)
-  const CHUNK_SIZE = 20 * 1024 * 1024; // 20 MB chunks
+  const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB chunks for better granularity
   const USE_CHUNKING = file.size > 50 * 1024 * 1024; // Use chunks for files > 50MB
 
   if (USE_CHUNKING) {
     // --- CHUNKED UPLOAD PATH ---
-    const doAuthFetch = async (url: string, options: RequestInit) => {
-      let currentToken = getToken();
-      let res = await fetch(url, {
-        ...options,
-        headers: {
-          ...options.headers,
-          Authorization: `Bearer ${currentToken}`,
-        },
+    const doAuthXhr = (
+      url: string, 
+      options: { 
+        method: string; 
+        headers?: Record<string, string>; 
+        body?: any; 
+        onProgress?: (loaded: number, total: number) => void 
+      }
+    ) => new Promise<{ status: number; body: string }>(async (resolve, reject) => {
+      const initialToken = getToken();
+      const firstTry = await new Promise<{ status: number; body: string }>((res, rej) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open(options.method, url);
+        xhr.setRequestHeader("Authorization", `Bearer ${initialToken}`);
+        if (options.headers) {
+          for (const [k, v] of Object.entries(options.headers)) {
+            xhr.setRequestHeader(k, v);
+          }
+        }
+        if (options.onProgress && xhr.upload) {
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) options.onProgress?.(e.loaded, e.total);
+          };
+        }
+        xhr.onload = () => res({ status: xhr.status, body: xhr.responseText });
+        xhr.onerror = () => rej(new Error("Network error"));
+        xhr.send(options.body);
       });
 
-      if (res.status === 401) {
+      if (firstTry.status === 401) {
         const { refreshToken, setTokens, logout } = useAuthStore.getState();
         if (refreshToken) {
           try {
@@ -196,30 +215,37 @@ export async function uploadFile(
               body: JSON.stringify({ refresh_token: refreshToken }),
             });
             if (refreshRes.ok) {
-              const { access_token, refresh_token } = (await refreshRes.json()) as {
-                access_token: string;
-                refresh_token: string;
-              };
+              const { access_token, refresh_token } = await refreshRes.json();
               setTokens(access_token, refresh_token);
-              res = await fetch(url, {
-                ...options,
-                headers: {
-                  ...options.headers,
-                  Authorization: `Bearer ${access_token}`,
-                },
-              });
+              // Retry with new token
+              const secondXhr = new XMLHttpRequest();
+              secondXhr.open(options.method, url);
+              secondXhr.setRequestHeader("Authorization", `Bearer ${access_token}`);
+              if (options.headers) {
+                for (const [k, v] of Object.entries(options.headers)) {
+                  secondXhr.setRequestHeader(k, v);
+                }
+              }
+              if (options.onProgress && secondXhr.upload) {
+                secondXhr.upload.onprogress = (e) => {
+                  if (e.lengthComputable) options.onProgress?.(e.loaded, e.total);
+                };
+              }
+              secondXhr.onload = () => resolve({ status: secondXhr.status, body: secondXhr.responseText });
+              secondXhr.onerror = () => reject(new Error("Network error"));
+              secondXhr.send(options.body);
+              return;
             }
           } catch { /* login below */ }
         }
-        if (res.status === 401) {
-          logout();
-          throw new Error("Upload failed: session expired");
-        }
+        logout();
+        reject(new Error("Session expired"));
+      } else {
+        resolve(firstTry);
       }
-      return res;
-    };
+    });
 
-    const initRes = await doAuthFetch(`${baseUrl}/api/v1/files/upload/initialize`, {
+    const initRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/initialize`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -230,10 +256,10 @@ export async function uploadFile(
         folder_slug: folderSlug,
       }),
     });
-    if (!initRes.ok) throw new Error(`Chunk initialization failed: ${initRes.status}`);
-    const { upload_id } = await initRes.json();
+    if (initRes.status !== 200) throw new Error(`Chunk initialization failed: ${initRes.status}`);
+    const { upload_id } = JSON.parse(initRes.body);
 
-    let uploadedBytes = 0;
+    let totalUploadedPreviousChunks = 0;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
     for (let i = 0; i < totalChunks; i++) {
@@ -241,19 +267,21 @@ export async function uploadFile(
         const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
-        const chunkRes = await doAuthFetch(`${baseUrl}/api/v1/files/upload/chunk/${upload_id}`, {
+        const chunkRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/chunk/${upload_id}`, {
           method: "POST",
           headers: { "Content-Type": "application/octet-stream" },
           body: chunk,
+          onProgress: (loaded) => {
+            const currentTotalUploaded = totalUploadedPreviousChunks + loaded;
+            onUploadProgress?.(Math.round((currentTotalUploaded / file.size) * 100));
+          }
         });
 
-        if (!chunkRes.ok) throw new Error(`Chunk ${i} upload failed: ${chunkRes.status}`);
-        
-        uploadedBytes += chunk.size;
-        onUploadProgress?.(Math.round((uploadedBytes / file.size) * 100));
+        if (chunkRes.status !== 204) throw new Error(`Chunk ${i} upload failed: ${chunkRes.status}`);
+        totalUploadedPreviousChunks += chunk.size;
     }
 
-    const finalizeRes = await doAuthFetch(`${baseUrl}/api/v1/files/upload/finalize/${upload_id}`, {
+    const finalizeRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/finalize/${upload_id}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -265,8 +293,8 @@ export async function uploadFile(
       }),
     });
 
-    if (!finalizeRes.ok) throw new Error(`Finalization failed: ${finalizeRes.status}`);
-    const data = await finalizeRes.json();
+    if (finalizeRes.status < 200 || finalizeRes.status >= 300) throw new Error(`Finalization failed: ${finalizeRes.status}`);
+    const data = JSON.parse(finalizeRes.body);
     onProgress?.(data.operation_id, data.file_id);
     return data;
   }
