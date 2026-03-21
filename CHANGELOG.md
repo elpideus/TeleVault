@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.7] - 2026-03-21
+
+### Added
+
+- Chunked file upload support for large files (> 50MB): splits files into 20MB chunks to bypass Cloudflare and Nginx payload limits (fixes 413 Payload Too Large)
+- Backend endpoints for initializing, uploading chunks, and finalizing uploads to support the new chunking mechanism
+
+### Fixed
+
+- Duplicate file uploads: if a file with the same hash already exists, the frontend now identifies it pre-upload and marks it as "Already uploaded" instead of failing with a 409 Conflict error
+- Hardened authentication refresh during uploads: ensures the token is refreshed and the request retried for every chunk if needed, preventing session timeouts on very long multi-GB uploads
+
+---
+
 ## [1.0.6] - 2026-03-21
 
 ### Fixed
@@ -89,6 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VITE_THEME` build argument for UI theme selection
 - `ADMIN_TELEGRAM_ID` environment variable for automatic admin promotion on first login
 
+[1.0.7]: https://github.com/elpideus/TeleVault/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/elpideus/TeleVault/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/elpideus/TeleVault/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/elpideus/TeleVault/compare/v1.0.3...v1.0.4

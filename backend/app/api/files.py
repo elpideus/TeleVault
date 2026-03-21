@@ -46,6 +46,19 @@ class HashCheckBody(BaseModel):
     file_hash: str
 
 
+class ChunkInitializeBody(BaseModel):
+    filename: str
+    file_hash: str
+    total_size: int
+    mime_type: Optional[str] = None
+    folder_slug: Optional[str] = None
+    channel_id: Optional[uuid.UUID] = None
+
+
+class ChunkFinalizeBody(BaseModel):
+    file_hash: str
+
+
 # ── Fixed-path routes MUST be registered before /{file_id} ──────────────────
 
 @router.get("/", response_model=Paginated[FileOut])
@@ -275,6 +288,128 @@ async def upload_file(
         file_id=file_id,
         original_name=filename,
         total_size=total_size,
+        split_count=split_count,
+        folder_id=folder.id if folder else None,
+    )
+
+
+# --- Chunked Upload Endpoints ---
+
+_chunked_uploads: dict[str, str] = {}  # upload_id -> tmp_path
+
+
+@router.post("/upload/initialize", status_code=200)
+async def initialize_chunked_upload(
+    body: ChunkInitializeBody,
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Start a chunked upload for a large file."""
+    upload_id = str(uuid.uuid4())
+    fd, tmp_path = tempfile.mkstemp()
+    os.close(fd)
+    _chunked_uploads[upload_id] = tmp_path
+    return {"upload_id": upload_id}
+
+
+@router.post("/upload/chunk/{upload_id}", status_code=204)
+async def upload_chunk(
+    upload_id: str,
+    request: Request,
+):
+    """Append a chunk of data to the temporary file."""
+    tmp_path = _chunked_uploads.get(upload_id)
+    if not tmp_path:
+        raise HTTPException(status_code=404, detail="Upload session not found or expired.")
+
+    with open(tmp_path, "ab") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+
+
+@router.post("/upload/finalize/{upload_id}", status_code=202, response_model=FileUploadOut)
+async def finalize_chunked_upload(
+    upload_id: str,
+    body: ChunkInitializeBody,  # Re-sending metadata for finalization
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    pool: ClientPool = Depends(get_client_pool),
+):
+    """Finalize the chunked upload and start Telegram processing."""
+    tmp_path = _chunked_uploads.pop(upload_id, None)
+    if not tmp_path:
+        raise HTTPException(status_code=404, detail="Upload session not found.")
+
+    if not os.path.exists(tmp_path):
+        raise HTTPException(status_code=404, detail="Temporary file missing.")
+
+    # Sanitize and resolve as in upload_file...
+    def _sanitize(s: str) -> str:
+        s = re.sub(r"[^A-Za-z0-9_\-]", "_", s)
+        s = re.sub(r"[_\-]{2,}", "_", s)
+        return s.strip("_-")
+
+    raw_filename = body.filename
+    if raw_filename:
+        _stem, _dot, _ext = raw_filename.rpartition(".")
+        if _dot:
+            _stem_clean = _sanitize(_stem) or "upload"
+            _ext_clean = _sanitize(_ext)
+            filename = f"{_stem_clean}.{_ext_clean}" if _ext_clean else _stem_clean
+        else:
+            filename = _sanitize(raw_filename) or "upload"
+    else:
+        filename = "upload"
+
+    # Resolve folder
+    if body.folder_slug:
+        folder = await folders_svc.get_folder_by_slug(
+            session, current_user.telegram_id, body.folder_slug
+        )
+    else:
+        folder = None
+
+    # Resolve channel
+    channel = await upload_svc.resolve_channel(
+        session, current_user.telegram_id, body.channel_id, folder
+    )
+
+    # Validate + create operation
+    operation_id, file_id, split_count, channel_record = await upload_svc.prepare_upload(
+        session=session,
+        registry=operation_registry,
+        owner_id=current_user.telegram_id,
+        folder_id=folder.id if folder else None,
+        channel_id=channel.id,
+        filename=filename,
+        mime_type=body.mime_type,
+        total_size=body.total_size,
+        file_hash=body.file_hash,
+    )
+
+    # Start background task
+    task = asyncio.create_task(upload_svc.execute_upload(
+        registry=operation_registry,
+        pool=pool,
+        operation_id=operation_id,
+        file_id=file_id,
+        owner_id=current_user.telegram_id,
+        folder_id=folder.id if folder else None,
+        channel=channel_record,
+        filename=filename,
+        mime_type=body.mime_type,
+        total_size=body.total_size,
+        file_hash=body.file_hash,
+        tmp_path=tmp_path,
+    ))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return FileUploadOut(
+        operation_id=operation_id,
+        file_id=file_id,
+        original_name=filename,
+        total_size=body.total_size,
         split_count=split_count,
         folder_id=folder.id if folder else None,
     )

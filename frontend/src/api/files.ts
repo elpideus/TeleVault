@@ -142,6 +142,20 @@ export async function uploadFile(
     },
     body: JSON.stringify({ file_hash: hash }),
   });
+
+  if (checkRes.status === 409) {
+    try {
+      const errBody = await checkRes.json();
+      if (errBody.detail?.error === "DUPLICATE_FILE" && errBody.detail?.detail?.file_id) {
+        // Already exists — fake a success response and return immediately
+        const fileId = errBody.detail.detail.file_id;
+        onUploadProgress?.(100);
+        onProgress?.("ALREADY_EXISTS", fileId);
+        return { operation_id: "ALREADY_EXISTS", file_id: fileId };
+      }
+    } catch { /* fallback to error below */ }
+  }
+
   if (!checkRes.ok) {
     let errMsg = "Duplicate check failed";
     try {
@@ -156,7 +170,108 @@ export async function uploadFile(
     throw new Error(`Upload failed: ${checkRes.status} ${errMsg}`);
   }
 
-  // 3. Upload via XHR to get HTTP-level upload progress events
+  // 3. Choose upload strategy: direct (small) or chunked (large)
+  const CHUNK_SIZE = 20 * 1024 * 1024; // 20 MB chunks
+  const USE_CHUNKING = file.size > 50 * 1024 * 1024; // Use chunks for files > 50MB
+
+  if (USE_CHUNKING) {
+    // --- CHUNKED UPLOAD PATH ---
+    const doAuthFetch = async (url: string, options: RequestInit) => {
+      let currentToken = getToken();
+      let res = await fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          Authorization: `Bearer ${currentToken}`,
+        },
+      });
+
+      if (res.status === 401) {
+        const { refreshToken, setTokens, logout } = useAuthStore.getState();
+        if (refreshToken) {
+          try {
+            const refreshRes = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: refreshToken }),
+            });
+            if (refreshRes.ok) {
+              const { access_token, refresh_token } = (await refreshRes.json()) as {
+                access_token: string;
+                refresh_token: string;
+              };
+              setTokens(access_token, refresh_token);
+              res = await fetch(url, {
+                ...options,
+                headers: {
+                  ...options.headers,
+                  Authorization: `Bearer ${access_token}`,
+                },
+              });
+            }
+          } catch { /* login below */ }
+        }
+        if (res.status === 401) {
+          logout();
+          throw new Error("Upload failed: session expired");
+        }
+      }
+      return res;
+    };
+
+    const initRes = await doAuthFetch(`${baseUrl}/api/v1/files/upload/initialize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: file.name,
+        file_hash: hash,
+        total_size: file.size,
+        mime_type: file.type,
+        folder_slug: folderSlug,
+      }),
+    });
+    if (!initRes.ok) throw new Error(`Chunk initialization failed: ${initRes.status}`);
+    const { upload_id } = await initRes.json();
+
+    let uploadedBytes = 0;
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+    for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+
+        const chunkRes = await doAuthFetch(`${baseUrl}/api/v1/files/upload/chunk/${upload_id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: chunk,
+        });
+
+        if (!chunkRes.ok) throw new Error(`Chunk ${i} upload failed: ${chunkRes.status}`);
+        
+        uploadedBytes += chunk.size;
+        onUploadProgress?.(Math.round((uploadedBytes / file.size) * 100));
+    }
+
+    const finalizeRes = await doAuthFetch(`${baseUrl}/api/v1/files/upload/finalize/${upload_id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: file.name,
+        file_hash: hash,
+        total_size: file.size,
+        mime_type: file.type,
+        folder_slug: folderSlug,
+      }),
+    });
+
+    if (!finalizeRes.ok) throw new Error(`Finalization failed: ${finalizeRes.status}`);
+    const data = await finalizeRes.json();
+    onProgress?.(data.operation_id, data.file_id);
+    return data;
+  }
+
+  // --- DIRECT UPLOAD PATH (Legacy/Small files) ---
   const form = new FormData();
   form.append("file", file);
   form.append("filename", file.name);

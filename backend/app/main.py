@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="TeleVault API", version="1.0.6", lifespan=lifespan)
+    application = FastAPI(title="TeleVault API", version="1.0.7", lifespan=lifespan)
 
     application.add_middleware(
         CORSMiddleware,
