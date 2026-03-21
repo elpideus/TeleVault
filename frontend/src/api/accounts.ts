@@ -28,7 +28,17 @@ export interface QRPollResponse {
 
 export const accountsKeys = {
   list: ["accounts", "list"] as const,
+  primary: ["accounts", "primary"] as const,
 };
+
+export async function getPrimaryAccount(): Promise<AltAccountOut> {
+  const baseUrl = getBaseUrl();
+  const res = await fetch(`${baseUrl}/api/v1/accounts/primary`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) throw new Error(`getPrimaryAccount failed: ${res.status}`);
+  return res.json();
+}
 
 export async function listAltAccounts(): Promise<AltAccountOut[]> {
   const baseUrl = getBaseUrl();
