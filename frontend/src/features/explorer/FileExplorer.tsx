@@ -275,8 +275,14 @@ export function FileExplorer() {
               isRoot ? null : slug,
               (operationId, fileId) => {
                 realOperationId = operationId;
-                promoteUpload(tempId, operationId, fileId);
-                setStatus(operationId, "processing");
+                if (operationId) {
+                  promoteUpload(tempId, operationId, fileId);
+                  setStatus(operationId, "processing");
+                } else {
+                  // Duplicate file — already exists
+                  updateProgress(tempId, 100);
+                  setStatus(tempId, "complete");
+                }
               },
               (progress) => updateProgress(tempId, progress),
               (progress) => {
