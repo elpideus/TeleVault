@@ -346,7 +346,11 @@ async def initialize_chunked_upload(
     # Pre-allocate the full file so parallel chunk writes land at correct offsets.
     await asyncio.to_thread(_preallocate_file, tmp_path, body.total_size)
     _chunked_uploads[upload_id] = (tmp_path, chunk_size)
-    return {"upload_id": upload_id, "chunk_size": chunk_size}
+    return {
+        "upload_id": upload_id,
+        "chunk_size": chunk_size,
+        "max_parallel_chunks": get_settings().upload_max_parallel_chunks,
+    }
 
 
 @router.post("/upload/chunk/{upload_id}/{chunk_index}", status_code=204)

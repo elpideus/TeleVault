@@ -244,11 +244,11 @@ export async function uploadFile(
       }),
     });
     if (initRes.status !== 200) throw new Error(`Chunk initialization failed: ${initRes.status}`);
-    const { upload_id, chunk_size } = JSON.parse(initRes.body);
-    const FINAL_CHUNK_SIZE = chunk_size || 90 * 1024 * 1024;
+    const { upload_id, chunk_size, max_parallel_chunks } = JSON.parse(initRes.body);
+    const FINAL_CHUNK_SIZE = chunk_size || 5 * 1024 * 1024;
+    const CONCURRENCY: number = max_parallel_chunks || 4;
 
     const totalChunks = Math.ceil(file.size / FINAL_CHUNK_SIZE);
-    const CONCURRENCY = 4;
 
     // Track bytes uploaded per chunk index for accurate parallel progress.
     const uploadedPerChunk = new Array(totalChunks).fill(0);
