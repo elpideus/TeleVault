@@ -199,6 +199,7 @@ async def execute_upload(
     total_size: int,
     file_hash: str,
     tmp_path: str,
+    account_offset: int = 0,   # which account handles split 0
 ) -> None:
     """Upload splits to Telegram, write DB records, clean up temp file.
 
@@ -249,7 +250,7 @@ async def execute_upload(
             await c.connect()
 
     async def _upload_split(split_index: int) -> UploadedSplitResult:
-        account_id, client = client_snapshot[split_index % len(client_snapshot)]
+        account_id, client = client_snapshot[(account_offset + split_index) % len(client_snapshot)]
         offset = split_index * _SPLIT_SIZE
         split_size = min(_SPLIT_SIZE, total_size - offset)
         split_name = f"{filename}.part{split_index}" if multi else filename
