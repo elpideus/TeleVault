@@ -132,11 +132,9 @@ async def test_worker_calls_execute_upload():
 @pytest.mark.asyncio
 async def test_shutdown_processes_pending_jobs():
     executed = []
-    barrier = asyncio.Event()
 
     async def slow_execute(**kwargs):
         executed.append(kwargs["operation_id"])
-        barrier.set()
 
     pool = UploadWorkerPool(registry=MagicMock(), pool=MagicMock())
 

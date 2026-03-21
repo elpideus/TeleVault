@@ -112,6 +112,8 @@ class UploadWorkerPool:
         all_tasks = [t for tasks in self._workers.values() for t in tasks]
         await asyncio.gather(*all_tasks, return_exceptions=True)
         self._workers.clear()
+        self._queues.clear()
+        self._slot_counter.clear()
 
     # ── Internal ────────────────────────────────────────────────────────────
 
@@ -129,7 +131,6 @@ class UploadWorkerPool:
                 break  # Clean exit — no job was dequeued
 
             if job is None:  # shutdown sentinel
-                queue.task_done()
                 break
 
             try:
