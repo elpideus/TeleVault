@@ -8,6 +8,7 @@ from app.db.models.user import User
 from app.schemas.channels import ChannelIn, ChannelOut, ChannelUpdate, ChannelCreateIn
 from app.schemas.pagination import Paginated
 from app.services import channels as svc
+from app.services.channel_membership import enroll_all_accounts_in_channel
 from app.telegram.client_pool import ClientPool
 
 router = APIRouter(prefix="/api/v1/channels", tags=["channels"])
@@ -18,8 +19,11 @@ async def create_channel(
     data: ChannelIn,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    pool: ClientPool = Depends(get_client_pool),
 ):
-    return await svc.create_channel(session, current_user.telegram_id, data)
+    channel = await svc.create_channel(session, current_user.telegram_id, data)
+    await enroll_all_accounts_in_channel(pool, channel, session, current_user.telegram_id)
+    return channel
 
 
 @router.post("/telegram", response_model=ChannelOut, status_code=201)
@@ -65,7 +69,9 @@ async def create_telegram_channel(
         channel_id=channel_id,
         label=data.title,
     )
-    return await svc.create_channel(session, current_user.telegram_id, db_data)
+    channel = await svc.create_channel(session, current_user.telegram_id, db_data)
+    await enroll_all_accounts_in_channel(pool, channel, session, current_user.telegram_id)
+    return channel
 
 
 
