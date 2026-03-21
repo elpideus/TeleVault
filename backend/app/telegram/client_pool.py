@@ -173,11 +173,6 @@ class ClientPool:
                 if not client.is_connected():
                     logger.info("Account %s disconnected — reconnecting", account_id)
                     try:
-                        async with session_factory() as db:
-                            ta = await db.get(TelegramAccount, account_id)
-                            if ta is None:
-                                continue
-                            session_string = decrypt_string(ta.session_string, settings.encryption_key)
                         await client.connect()
                     except Exception:
                         logger.exception("Reconnect failed for account %s", account_id)
