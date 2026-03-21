@@ -242,6 +242,9 @@ async def execute_upload(
                     operation_id, _offset + sent, total_size,
                     message=f"Uploading to Telegram… part {split_index + 1} of {num_splits}",
                 )
+                # Forcefully yield control to the event loop. Telethon's upload/encryption
+                # tight loop can starve the event loop, causing Uvicorn to hang on other requests.
+                await asyncio.sleep(0.01)
 
             reader = _SplitReader(tmp_path, offset, split_size, split_name)
             try:

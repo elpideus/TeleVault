@@ -323,8 +323,16 @@ export function FileExplorer() {
                   const unsub = useUploadStore.subscribe((state) => {
                     if (done) return;
                     const u = state.uploads.get(opId);
-                    if (!u || u.status === "complete") { cleanupQueue(unsub); resolve(); }
-                    else if (u.status === "error") { cleanupQueue(unsub); reject(new Error(u.error ?? "Upload failed")); }
+                    if (!u || u.status === "complete") { 
+                      cleanupQueue(unsub); 
+                      resolve(); 
+                    } else if (u.status === "error") { 
+                      cleanupQueue(unsub); 
+                      reject(new Error(u.error ?? "Upload failed")); 
+                    } else if (u.status === "cancelled") {
+                      cleanupQueue(unsub);
+                      reject(new Error("Upload cancelled"));
+                    }
                   });
 
                   const attachQueueHandlers = (src: EventSource) => {
@@ -375,10 +383,12 @@ export function FileExplorer() {
             void queryClient.invalidateQueries({ queryKey: fileKeys.all });
             toast.success(`Uploaded ${file.name}`);
           } catch (err: any) {
-            console.error("Upload failed:", err);
-            const opId = realOperationId ?? tempId;
-            setStatus(opId, "error", (err as Error).message);
-            toast.error(`Failed to upload ${file.name}: ${(err as Error).message}`);
+            if (err.message !== "Upload cancelled") {
+              console.error("Upload failed:", err);
+              const opId = realOperationId ?? tempId;
+              setStatus(opId, "error", (err as Error).message);
+              toast.error(`Failed to upload ${file.name}: ${(err as Error).message}`);
+            }
           }
         }
       });
