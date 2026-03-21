@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.11] - 2026-03-21
+
+### Fixed
+
+- Transfer list jumping: preserved item order in the upload store when transitioning from manual upload to Telegram processing.
+
+---
+
 ## [1.0.10] - 2026-03-21
 
 ### Added
