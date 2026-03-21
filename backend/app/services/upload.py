@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import uuid
+from dataclasses import dataclass
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -24,6 +25,18 @@ from app.telegram.operations import UploadedSplit, delete_message, upload_docume
 logger = logging.getLogger(__name__)
 
 _SPLIT_SIZE = 2_097_152_000
+
+
+@dataclass
+class UploadedSplitResult:
+    """Returned by each split coroutine on success. Carries client reference for rollback."""
+
+    split_index: int
+    split_size: int
+    uploaded: object  # UploadedSplit or whatever upload_document returns
+    account_id: object  # uuid.UUID
+    client: object  # TelegramClient
+    channel_telegram_id: int
 
 
 class _SplitReader(io.RawIOBase):
@@ -86,9 +99,10 @@ async def check_duplicate(
 
 
 async def rollback_splits(
-    client: object, channel_id: int, message_ids: list[int]
+    splits: list[tuple[object, int, int]],  # [(client, channel_telegram_id, message_id)]
 ) -> None:
-    for msg_id in message_ids:
+    """Delete uploaded Telegram messages using the correct client per split."""
+    for client, channel_id, msg_id in splits:
         try:
             await delete_message(client, channel_id, msg_id)
         except Exception:
@@ -193,7 +207,7 @@ async def execute_upload(
 
     Lifecycle:
       1. Write File(status=pending) immediately — crash-visible anchor in DB.
-      2. Upload all splits to Telegram.
+      2. Upload all splits to Telegram in parallel using asyncio.gather().
       3a. Success → update status=complete, write Split records atomically.
       3b. Failure → rollback Telegram messages, update status=failed.
     """
@@ -203,7 +217,6 @@ async def execute_upload(
     await asyncio.sleep(1.0)
 
     telegram_channel_id = channel.channel_id
-    telegram_account_id = channel.telegram_account_id
     channel_id = channel.id
     num_splits = max(1, math.ceil(total_size / _SPLIT_SIZE))
     multi = num_splits > 1
@@ -224,99 +237,123 @@ async def execute_upload(
         session.add(file_record)
         await session.commit()
 
-    # ── 2. Upload splits to Telegram ──────────────────────────────────────────
-    client = pool.get_client_for_user(owner_id)
-    if not client.is_connected():
-        logger.info("Telegram client disconnected — reconnecting before upload %s", operation_id)
-        await client.connect()
-    uploaded: list[tuple[int, int, UploadedSplit]] = []
+    # ── 2. Upload splits to Telegram in parallel ──────────────────────────────
+    client_snapshot = pool.get_all_clients_for_user(owner_id)
+    if not client_snapshot:
+        raise RuntimeError("No active Telegram client for user")
 
+    # Ensure all clients are connected before launching parallel uploads
+    for _, c in client_snapshot:
+        if not c.is_connected():
+            logger.info("Telegram client disconnected — reconnecting before upload %s", operation_id)
+            await c.connect()
+
+    async def _upload_split(split_index: int) -> UploadedSplitResult:
+        account_id, client = client_snapshot[split_index % len(client_snapshot)]
+        offset = split_index * _SPLIT_SIZE
+        split_size = min(_SPLIT_SIZE, total_size - offset)
+        split_name = f"{filename}.part{split_index}" if multi else filename
+
+        async def _on_progress(sent: int, _total: int) -> None:
+            await registry.emit_progress(
+                operation_id,
+                offset + sent,
+                total_size,
+                message=f"Uploading to Telegram… part {split_index + 1} of {num_splits}",
+            )
+            # Forcefully yield control to the event loop. Telethon's upload/encryption
+            # tight loop can starve the event loop, causing Uvicorn to hang on other requests.
+            await asyncio.sleep(0.01)
+
+        reader = _SplitReader(tmp_path, offset, split_size, split_name)
+        try:
+            result = await upload_document(
+                client,
+                telegram_channel_id,
+                reader,
+                filename=split_name,
+                size=split_size,
+                progress_callback=_on_progress,
+            )
+        finally:
+            reader.close()
+
+        return UploadedSplitResult(
+            split_index=split_index,
+            split_size=split_size,
+            uploaded=result,
+            account_id=account_id,
+            client=client,
+            channel_telegram_id=telegram_channel_id,
+        )
+
+    coroutines = [_upload_split(i) for i in range(num_splits)]
     try:
-        for split_index in range(num_splits):
-            offset = split_index * _SPLIT_SIZE
-            split_size = min(_SPLIT_SIZE, total_size - offset)
-            split_name = f"{filename}.part{split_index}" if multi else filename
+        results = await asyncio.gather(*coroutines, return_exceptions=True)
+        # Separate successes from failures
+        successes: list[UploadedSplitResult] = [r for r in results if isinstance(r, UploadedSplitResult)]
+        errors = [r for r in results if isinstance(r, BaseException)]
 
-            async def _on_progress(sent: int, _total: int, _offset: int = offset) -> None:
-                await registry.emit_progress(
-                    operation_id, _offset + sent, total_size,
-                    message=f"Uploading to Telegram… part {split_index + 1} of {num_splits}",
-                )
-                # Forcefully yield control to the event loop. Telethon's upload/encryption
-                # tight loop can starve the event loop, causing Uvicorn to hang on other requests.
-                await asyncio.sleep(0.01)
+        if errors:
+            # ── 3b. Failure: rollback Telegram messages, mark file failed ─────
+            rollback_list = [
+                (r.client, r.channel_telegram_id, r.uploaded.message_id)
+                for r in successes
+            ]
+            await rollback_splits(rollback_list)
+            await registry.emit_error(operation_id, "Upload failed", message="Upload to Telegram failed")
+            logger.error("execute_upload failed for operation %s: %s", operation_id, errors[0])
+            async with AsyncSessionLocal() as session:
+                record = await session.get(File, file_id)
+                if record is not None:
+                    record.status = FILE_STATUS_FAILED
+                    await session.commit()
+            return
 
-            reader = _SplitReader(tmp_path, offset, split_size, split_name)
-            try:
-                result = await upload_document(
-                    client,
-                    telegram_channel_id,
-                    reader,
-                    filename=split_name,
-                    size=split_size,
-                    progress_callback=_on_progress,
-                )
-            finally:
-                reader.close()
-
-            uploaded.append((split_index, split_size, result))
-
-    except Exception as exc:
-        # ── 3b. Failure: rollback Telegram messages, mark file failed ─────────
-        message_ids = [r.message_id for _, _, r in uploaded]
-        await rollback_splits(client, telegram_channel_id, message_ids)
-        await registry.emit_error(operation_id, "Upload failed", message="Upload to Telegram failed")
-        logger.exception("execute_upload failed for operation %s", operation_id)
+        # ── 3a. Success: write splits + mark complete atomically ──────────────
+        split_count = len(successes)
         async with AsyncSessionLocal() as session:
-            record = await session.get(File, file_id)
-            if record is not None:
-                record.status = FILE_STATUS_FAILED
+            try:
+                record = await session.get(File, file_id)
+                if record is None:
+                    # Extremely unlikely (record deleted externally), nothing to do
+                    await registry.emit_error(operation_id, "File record missing after upload", message="Internal error: file record not found")
+                    return
+                record.status = FILE_STATUS_COMPLETE
+                record.file_unique_id = successes[0].uploaded.file_unique_id if successes else None
+                record.split_count = split_count
+
+                for r in successes:
+                    session.add(Split(
+                        file_id=file_id,
+                        channel_id=channel_id,
+                        telegram_account_id=r.account_id,   # uploading account (not channel owner)
+                        message_id=r.uploaded.message_id,
+                        file_id_tg=r.uploaded.file_id,
+                        file_unique_id_tg=r.uploaded.file_unique_id,
+                        index=r.split_index,
+                        size=r.split_size,
+                    ))
+
+                await log_event(
+                    session,
+                    actor_telegram_id=owner_id,
+                    action="file.upload",
+                    target_type="file",
+                    target_id=str(file_id),
+                    metadata={"filename": filename, "name": filename, "split_count": split_count},
+                )
                 await session.commit()
-        return
+            except Exception:
+                await session.rollback()
+                await registry.emit_error(operation_id, "Database write failed", message="Failed to save file record")
+                logger.exception("execute_upload DB commit failed for operation %s", operation_id)
+                return
+
     finally:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
-
-    # ── 3a. Success: write splits + mark complete atomically ──────────────────
-    split_count = len(uploaded)
-    async with AsyncSessionLocal() as session:
-        try:
-            record = await session.get(File, file_id)
-            if record is None:
-                # Extremely unlikely (record deleted externally), nothing to do
-                await registry.emit_error(operation_id, "File record missing after upload", message="Internal error: file record not found")
-                return
-            record.status = FILE_STATUS_COMPLETE
-            record.file_unique_id = uploaded[0][2].file_unique_id if uploaded else None
-            record.split_count = split_count
-
-            for idx, size, result in uploaded:
-                session.add(Split(
-                    file_id=file_id,
-                    channel_id=channel_id,
-                    telegram_account_id=telegram_account_id,
-                    message_id=result.message_id,
-                    file_id_tg=result.file_id,
-                    file_unique_id_tg=result.file_unique_id,
-                    index=idx,
-                    size=size,
-                ))
-
-            await log_event(
-                session,
-                actor_telegram_id=owner_id,
-                action="file.upload",
-                target_type="file",
-                target_id=str(file_id),
-                metadata={"filename": filename, "name": filename, "split_count": split_count},
-            )
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            await registry.emit_error(operation_id, "Database write failed", message="Failed to save file record")
-            logger.exception("execute_upload DB commit failed for operation %s", operation_id)
-            return
 
     await registry.emit_done(operation_id, message="Upload complete")
