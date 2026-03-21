@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.auth import router as auth_router
 from app.api.debug import router as debug_router
 from app.api.channels import router as channels_router
+from app.api.config import router as config_router
 from app.api.dialogs import router as dialogs_router
 from app.api.events import router as events_router
 from app.api.files import router as files_router
@@ -71,7 +72,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="TeleVault API", version="1.0.7", lifespan=lifespan)
+    application = FastAPI(title="TeleVault API", version="1.0.8", lifespan=lifespan)
 
     application.add_middleware(
         CORSMiddleware,
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(auth_router)
+    application.include_router(config_router)
     application.include_router(channels_router)
     application.include_router(dialogs_router)
     application.include_router(events_router)

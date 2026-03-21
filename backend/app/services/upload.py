@@ -197,6 +197,11 @@ async def execute_upload(
       3a. Success → update status=complete, write Split records atomically.
       3b. Failure → rollback Telegram messages, update status=failed.
     """
+    # Yield control back to the event loop so the HTTP response can be sent first.
+    # Without this, Telethon's heavy encryption + disk IO might starve the loop,
+    # causing Cloudflare to timeout the original HTTP request with a 524.
+    await asyncio.sleep(1.0)
+
     telegram_channel_id = channel.channel_id
     telegram_account_id = channel.telegram_account_id
     channel_id = channel.id
