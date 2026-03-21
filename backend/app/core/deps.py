@@ -7,7 +7,9 @@ from app.core.config import get_settings  # noqa: F401 — re-exported
 from app.db.models.user import User
 from app.db.session import get_db  # noqa: F401 — re-exported
 from app.telegram import client_pool as _client_pool_instance
+from app.telegram import upload_worker_pool as _upload_worker_pool_instance
 from app.telegram.client_pool import ClientPool
+from app.services.upload_queue import UploadWorkerPool
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/v1/auth/token", auto_error=False
@@ -49,6 +51,10 @@ async def get_current_user(
 
 def get_client_pool() -> ClientPool:
     return _client_pool_instance
+
+
+def get_upload_worker_pool() -> UploadWorkerPool:
+    return _upload_worker_pool_instance
 
 
 async def require_admin(
