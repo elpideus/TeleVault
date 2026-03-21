@@ -6,8 +6,6 @@ import uuid
 from typing import Optional
 from urllib.parse import quote
 
-# Keep strong references to background upload tasks so the GC cannot cancel them.
-_background_tasks: set[asyncio.Task] = set()
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -16,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from streaming_form_data import StreamingFormDataParser
 from streaming_form_data.targets import FileTarget, ValueTarget
 
-from app.core.deps import get_client_pool, get_current_user, get_db
+from app.core.deps import get_client_pool, get_current_user, get_db, get_upload_worker_pool
+from app.services.upload_queue import UploadJob, UploadWorkerPool
 from app.db.models.user import User
 from app.schemas.files import (
     BulkCopyFileBody,
@@ -170,6 +169,7 @@ async def check_hash(
 async def upload_file(
     request: Request,
     pool: ClientPool = Depends(get_client_pool),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
 ):
     from app.core.auth import decode_access_token, AuthError
     from app.db.session import AsyncSessionLocal
@@ -282,13 +282,9 @@ async def upload_file(
             pass
         raise
 
-    # Kick off Telegram upload as a background task so this response is
-    # delivered to the client before any progress events are emitted.
-    # Store a strong reference in _background_tasks so the GC cannot cancel
-    # the task mid-upload (critical for multi-GB files that run for minutes).
-    task = asyncio.create_task(upload_svc.execute_upload(
-        registry=operation_registry,
-        pool=pool,
+    # Submit to the upload worker pool so uploads are processed by a dedicated
+    # worker instead of a bare asyncio task that can be GC'd.
+    upload_worker_pool.submit(owner_id, UploadJob(
         operation_id=operation_id,
         file_id=file_id,
         owner_id=owner_id,
@@ -299,9 +295,8 @@ async def upload_file(
         total_size=total_size,
         file_hash=file_hash,
         tmp_path=tmp_path,
+        account_offset=0,  # overwritten by submit()
     ))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
     return FileUploadOut(
         operation_id=operation_id,
@@ -377,6 +372,7 @@ async def finalize_chunked_upload(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     pool: ClientPool = Depends(get_client_pool),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
 ):
     """Finalize the chunked upload and start Telegram processing."""
     entry = _chunked_uploads.pop(upload_id, None)
@@ -431,10 +427,8 @@ async def finalize_chunked_upload(
         file_hash=body.file_hash,
     )
 
-    # Start background task
-    task = asyncio.create_task(upload_svc.execute_upload(
-        registry=operation_registry,
-        pool=pool,
+    # Submit to the upload worker pool so uploads are processed by a dedicated worker.
+    upload_worker_pool.submit(current_user.telegram_id, UploadJob(
         operation_id=operation_id,
         file_id=file_id,
         owner_id=current_user.telegram_id,
@@ -445,9 +439,8 @@ async def finalize_chunked_upload(
         total_size=body.total_size,
         file_hash=body.file_hash,
         tmp_path=tmp_path,
+        account_offset=0,  # overwritten by submit()
     ))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
     return FileUploadOut(
         operation_id=operation_id,
