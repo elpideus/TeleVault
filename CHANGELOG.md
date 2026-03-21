@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-03-21
+
+### Added
+
+- Multi-account parallel uploads: connect additional Telegram accounts (alt accounts) to distribute file splits across accounts using round-robin assignment and upload them concurrently via `asyncio.gather()`
+- Alt accounts are automatically enrolled as channel co-admins (with explicit `post_messages`, `edit_messages`, `delete_messages`, `invite_users` rights) in all TeleVault-registered channels on add, and unenrolled on remove
+- New Accounts panel in Settings: add alt accounts via phone/OTP or QR login flow, view connection status with health indicator dots (green/yellow/red), and remove accounts with confirmation
+- 30-minute background health checks detect revoked or disconnected Telegram sessions and surface errors in the UI
+- New `/api/v1/accounts/` endpoints for full alt-account CRUD management
+- Transfers UI improvements: remaining count display, custom sorting, and duplicate transfer highlighting
+
+### Changed
+
+- `store_telegram_account` now accepts `is_primary` and `add_to_pool` parameters; primary auth path unchanged
+- Auth login flow refactored into shared `services/telegram_login.py` helpers with namespace-isolated pending state
+- `GET /api/v1/auth/accounts` removed; replaced by `GET /api/v1/accounts/`
+- `Split.telegram_account_id` now records the uploading account per split (not the channel owner)
+
+---
+
 ## [1.0.11] - 2026-03-21
 
 ### Fixed
