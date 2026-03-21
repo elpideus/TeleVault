@@ -632,6 +632,8 @@ function AddAccountModal({
     setQrError(null);
     try {
       const result = await initQrLogin();
+      // Guard: if modal closed while awaiting, don't start polling
+      if (!open) return;
       setQrUrl(result.qr_url);
       setPollToken(result.poll_token);
       startPolling(result.poll_token);
