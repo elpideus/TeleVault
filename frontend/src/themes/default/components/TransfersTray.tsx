@@ -118,18 +118,18 @@ export function TransfersTray({
     : storeUploads;
 
   const uploads = Array.from(uploadsMap.values());
-  const activeCount = uploads.filter((u) => u.status === "uploading" || u.status === "hashing").length;
+  const remainingCount = uploads.filter((u) => u.status !== "complete").length;
   const hasUploads = uploads.length > 0;
 
   // Auto-open the tray whenever a new active upload begins
-  const prevActiveCount = useRef(0);
+  const prevRemainingCount = useRef(0);
   useEffect(() => {
-    if (activeCount > 0 && prevActiveCount.current === 0) {
+    if (remainingCount > 0 && prevRemainingCount.current === 0) {
       if (!isControlled) setUncontrolledOpen(true);
       else onOpenChange?.(true);
     }
-    prevActiveCount.current = activeCount;
-  }, [activeCount, isControlled, onOpenChange]);
+    prevRemainingCount.current = remainingCount;
+  }, [remainingCount, isControlled, onOpenChange]);
 
   // Auto-close when everything is cleared
   useEffect(() => {
@@ -289,7 +289,7 @@ export function TransfersTray({
                 }}
               >
                 Transfers
-                {activeCount > 0 && (
+                {remainingCount > 0 && (
                   <span
                     style={{
                       font: "var(--tv-type-label-sm)",
@@ -297,7 +297,7 @@ export function TransfersTray({
                       marginLeft: 6,
                     }}
                   >
-                    {activeCount} active
+                    {remainingCount} remaining
                   </span>
                 )}
               </span>
@@ -350,14 +350,34 @@ export function TransfersTray({
             >
               <AnimatePresence initial={false}>
                 {hasUploads ? (
-                  uploads.map((upload) => (
-                    <TransferItem
-                      key={upload.id}
-                      upload={upload}
-                      onCancel={handleCancel}
-                      onRemove={handleRemove}
-                    />
-                  ))
+                  uploads
+                    .sort((a, b) => {
+                      const priority = {
+                        error: 0,
+                        uploading: 1,
+                        processing: 1,
+                        hashing: 1,
+                        queued: 1,
+                        complete: 2,
+                        cancelled: 3,
+                      };
+                      const pA = priority[a.status];
+                      const pB = priority[b.status];
+                      if (pA !== pB) return pA - pB;
+                      if (a.status === "complete" && b.status === "complete") {
+                        if (a.isDuplicate && !b.isDuplicate) return 1;
+                        if (!a.isDuplicate && b.isDuplicate) return -1;
+                      }
+                      return 0;
+                    })
+                    .map((upload) => (
+                      <TransferItem
+                        key={upload.id}
+                        upload={upload}
+                        onCancel={handleCancel}
+                        onRemove={handleRemove}
+                      />
+                    ))
                 ) : (
                   <motion.div
                     key="empty"
@@ -425,7 +445,7 @@ export function TransfersTray({
         ) : hasUploads ? (
           <TransfersTrayToggle
             key="toggle"
-            activeCount={activeCount}
+            activeCount={remainingCount}
             onClick={toggle}
           />
         ) : null}
