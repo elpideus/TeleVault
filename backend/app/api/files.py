@@ -318,6 +318,11 @@ async def upload_file(
 _chunked_uploads: dict[str, str] = {}  # upload_id -> tmp_path
 
 
+def _append_bytes(path: str, data: bytes) -> None:
+    with open(path, "ab") as f:
+        f.write(data)
+
+
 @router.post("/upload/initialize", status_code=200)
 async def initialize_chunked_upload(
     body: ChunkInitializeBody,
@@ -343,9 +348,9 @@ async def upload_chunk(
     if not tmp_path:
         raise HTTPException(status_code=404, detail="Upload session not found or expired.")
 
-    with open(tmp_path, "ab") as f:
-        async for chunk in request.stream():
-            f.write(chunk)
+    # Collect chunk bytes then write off the event loop to avoid blocking it.
+    data = b"".join([chunk async for chunk in request.stream()])
+    await asyncio.to_thread(_append_bytes, tmp_path, data)
 
 
 @router.post("/upload/finalize/{upload_id}", status_code=202, response_model=FileUploadOut)
