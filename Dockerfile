@@ -1,6 +1,6 @@
 # ─── Stage 0: Build WASM ─────────────────────────────────────────────────────
 FROM rust:1-slim AS wasm-builder
-RUN cargo install wasm-pack
+RUN cargo install wasm-pack --version 0.13.1 --locked
 WORKDIR /build/wasm-sha256
 COPY frontend/wasm-sha256/ .
 RUN RUSTFLAGS="-C target-feature=+simd128" \
@@ -15,7 +15,8 @@ WORKDIR /app
 COPY frontend/package*.json ./
 RUN npm install
 
-# Copy source and inject WASM artifacts from wasm-builder
+# Copy source; public/wasm/ is gitignored so it arrives empty here.
+# The wasm-builder COPY below then fills it with the real artifacts.
 COPY frontend/ .
 COPY --from=wasm-builder /wasm-out ./public/wasm/
 
