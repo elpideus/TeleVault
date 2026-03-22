@@ -1,18 +1,32 @@
+# ─── Stage 0: Build WASM ─────────────────────────────────────────────────────
+FROM rust:1-slim AS wasm-builder
+RUN cargo install wasm-pack --version 0.14.0 --locked
+WORKDIR /build/wasm-sha256
+COPY frontend/wasm-sha256/ .
+RUN RUSTFLAGS="-C target-feature=+simd128" \
+    wasm-pack build --target no-modules --release --out-dir /wasm-out
+
 # ─── Stage 1: Build frontend ─────────────────────────────────────────────────
 FROM node:22-alpine AS frontend-build
 
 WORKDIR /app
+
+# Install dependencies
 COPY frontend/package*.json ./
 RUN npm install
 
+# Copy source; public/wasm/ is gitignored so it arrives empty here.
+# The wasm-builder COPY below then fills it with the real artifacts.
 COPY frontend/ .
+COPY --from=wasm-builder /wasm-out ./public/wasm/
 
+# Pass build arguments (optional, defaults are used if not provided)
 ARG VITE_API_BASE_URL
 ARG VITE_THEME=default
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_THEME=$VITE_THEME
 
-RUN npm run build
+RUN npm run build:frontend
 
 # ─── Stage 2: Build Python dependencies ──────────────────────────────────────
 FROM python:3.13-slim AS backend-build
@@ -70,4 +84,3 @@ RUN mkdir -p /var/log/postgresql && chown postgres:postgres /var/log/postgresql
 EXPOSE 80
 
 ENTRYPOINT ["/entrypoint.sh"]
-

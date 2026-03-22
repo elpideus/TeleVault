@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# WASM build artifacts
+public/wasm/
+wasm-sha256/target/
