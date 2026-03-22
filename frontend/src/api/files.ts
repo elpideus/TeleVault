@@ -194,6 +194,9 @@ export async function uploadFile(
         }
         xhr.onload = () => res({ status: xhr.status, body: xhr.responseText });
         xhr.onerror = () => rej(new Error("Network error"));
+        // 3 minutes per request — prevents indefinite hangs that deadlock tvSem
+        xhr.timeout = 180_000;
+        xhr.ontimeout = () => res({ status: 524, body: "" });
         xhr.send(options.body);
       });
 
@@ -225,6 +228,8 @@ export async function uploadFile(
               }
               secondXhr.onload = () => resolve({ status: secondXhr.status, body: secondXhr.responseText });
               secondXhr.onerror = () => reject(new Error("Network error"));
+              secondXhr.timeout = 180_000;
+              secondXhr.ontimeout = () => resolve({ status: 524, body: "" });
               secondXhr.send(options.body);
               return;
             }
@@ -313,19 +318,26 @@ export async function uploadFile(
     const workers = Array.from({ length: Math.min(CONCURRENCY, totalChunks) }, () => worker());
     await Promise.all(workers);
 
-    const finalizeRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/finalize/${upload_id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filename: file.name,
-        file_hash: hash,
-        total_size: file.size,
-        mime_type: file.type,
-        folder_slug: folderSlug,
-      }),
+    const finalizeBody = JSON.stringify({
+      filename: file.name,
+      file_hash: hash,
+      total_size: file.size,
+      mime_type: file.type,
+      folder_slug: folderSlug,
     });
+    let finalizeRes: { status: number; body: string } | null = null;
+    for (let attempt = 0; attempt <= MAX_CHUNK_RETRIES; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+      finalizeRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/finalize/${upload_id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: finalizeBody,
+      });
+      if (finalizeRes.status >= 200 && finalizeRes.status < 300) break;
+      if (!RETRYABLE_STATUSES.has(finalizeRes.status)) break;
+    }
 
-    if (finalizeRes.status < 200 || finalizeRes.status >= 300) throw new Error(`Finalization failed: ${finalizeRes.status}`);
+    if (!finalizeRes || finalizeRes.status < 200 || finalizeRes.status >= 300) throw new Error(`Finalization failed: ${finalizeRes?.status ?? "no response"}`);
     const data = JSON.parse(finalizeRes.body);
     // Ensure the TeleVault progress bar reaches 100% before transitioning.
     onUploadProgress?.(100);

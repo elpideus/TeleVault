@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.2] - 2026-03-22
+
+### Fixed
+
+- Chunked uploads no longer stall indefinitely at 99 % or 100 %: each XHR request in the chunked upload path (both chunk PUT and finalize POST) now carries a 3-minute timeout; timed-out requests resolve as HTTP 524 so the existing retry loop handles them with exponential back-off (up to 4 retries) rather than hanging forever
+- The finalize request now retries on transient server errors (524, 502–504, etc.) instead of failing immediately, matching the per-chunk retry behaviour
+- Fixed a deadlock in the TeleVault semaphore (`tvSem`): a hung XHR with no timeout would permanently hold a concurrency slot, preventing all queued files from starting
+
 ## [1.2.1] - 2026-03-22
 
 ### Fixed
