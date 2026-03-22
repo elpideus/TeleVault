@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.1] - 2026-03-22
+
+### Fixed
+
+- Handled 401 token expiry in TUS upload path: the client now correctly refreshes the access token and retries the request instead of failing immediately
+- Fixed "body has already been consumed" error when cloning requests for retry in the TUS path
+
+---
+
 ## [1.3.0] - 2026-03-22
 
 ### Added
@@ -237,17 +246,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VITE_THEME` build argument for UI theme selection
 - `ADMIN_TELEGRAM_ID` environment variable for automatic admin promotion on first login
 
-[1.1.1]: https://github.com/elpideus/TeleVault/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/elpideus/TeleVault/compare/v1.0.11...v1.1.0
-[1.0.11]: https://github.com/elpideus/TeleVault/compare/v1.0.10...v1.0.11
-[1.0.10]: https://github.com/elpideus/TeleVault/compare/v1.0.9...v1.0.10
-[1.0.9]: https://github.com/elpideus/TeleVault/compare/v1.0.8...v1.0.9
-[1.0.8]: https://github.com/elpideus/TeleVault/compare/v1.0.7...v1.0.8
-[1.0.7]: https://github.com/elpideus/TeleVault/compare/v1.0.6...v1.0.7
-[1.0.6]: https://github.com/elpideus/TeleVault/compare/v1.0.5...v1.0.6
-[1.0.5]: https://github.com/elpideus/TeleVault/compare/v1.0.4...v1.0.5
-[1.0.4]: https://github.com/elpideus/TeleVault/compare/v1.0.3...v1.0.4
-[1.0.3]: https://github.com/elpideus/TeleVault/compare/v1.0.2...v1.0.3
-[1.0.2]: https://github.com/elpideus/TeleVault/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/elpideus/TeleVault/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/elpideus/TeleVault/releases/tag/v1.0.0
+[1.3.1]: https://github.com/elpideus/TeleVault/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/elpideus/TeleVault/compare/v1.2.3...v1.3.0

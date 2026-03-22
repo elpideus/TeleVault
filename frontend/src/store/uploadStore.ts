@@ -13,6 +13,8 @@ export interface UploadState {
   error?: string;
   folderId?: string;
   isDuplicate?: boolean;
+  speed?: number; // bytes per second
+  lastUpdate?: number; // timestamp
 }
 
 interface UploadStore {
@@ -28,7 +30,11 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
   uploads: new Map(),
   addUpload: (upload) => {
     const next = new Map(get().uploads);
-    next.set(upload.operationId, upload);
+    next.set(upload.operationId, {
+      ...upload,
+      lastUpdate: Date.now(),
+      speed: 0,
+    });
     set({ uploads: next });
   },
   promoteUpload: (tempId, realId, fileId) => {
@@ -38,7 +44,12 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
       const next = new Map<string, UploadState>();
       for (const [key, value] of current.entries()) {
         if (key === tempId) {
-          next.set(realId, { ...existing, operationId: realId, fileId });
+          next.set(realId, { 
+            ...existing, 
+            operationId: realId, 
+            fileId,
+            lastUpdate: Date.now(), // Reset timing on promotion
+          });
         } else {
           next.set(key, value);
         }
@@ -50,10 +61,33 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
     const next = new Map(get().uploads);
     const existing = next.get(operationId);
     if (existing) {
-      next.set(operationId, { ...existing, progress });
+      const now = Date.now();
+      const lastUpdate = existing.lastUpdate ?? now;
+      const deltaTime = (now - lastUpdate) / 1000; // seconds
+
+      let speed = existing.speed ?? 0;
+
+      if (deltaTime >= 0.5) { // Update speed every 500ms
+        const deltaProgress = progress - existing.progress;
+        if (deltaProgress > 0) {
+          const deltaBytes = (deltaProgress / 100) * existing.fileSize;
+          const currentSpeed = deltaBytes / deltaTime;
+          
+          // Smooth the speed
+          speed = speed === 0 ? currentSpeed : speed * 0.7 + currentSpeed * 0.3;
+        } else if (deltaProgress < 0) {
+          // Progress reset (e.g. starting a new phase)
+          speed = 0;
+        }
+        next.set(operationId, { ...existing, progress, speed, lastUpdate: now });
+      } else {
+        next.set(operationId, { ...existing, progress });
+      }
+      
       set({ uploads: next });
     }
   },
+
   setStatus: (operationId, status, error, isDuplicate) => {
     const next = new Map(get().uploads);
     const existing = next.get(operationId);

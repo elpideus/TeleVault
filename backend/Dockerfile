@@ -13,6 +13,7 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .
+RUN sed -i 's/\r$//' startup.sh && chmod +x startup.sh
 
 EXPOSE 8000
 ENTRYPOINT ["bash", "startup.sh"]
