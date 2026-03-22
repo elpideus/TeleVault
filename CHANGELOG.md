@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2026-03-22
+
+### Fixed
+
+- Chunk uploads now retry up to 4 times with exponential backoff (1 s → 2 s → 4 s → 8 s) on transient HTTP errors (524 Cloudflare timeout, 502, 503, 504, and other 5xx/Cloudflare codes), preventing large-file uploads from failing on flaky connections
+- Telegram upload worker now enforces a per-split timeout (min 30 min, scaled by file size at 50 KB/s) so a silently dropped MTProto session can no longer cause an upload to hang at 0 % indefinitely; timed-out uploads now surface as errors in the transfer tray
+- Hash and TeleVault-upload semaphores are now shared across all upload batches (hoisted to component refs), so uploading via drag-drop and the file picker in the same session no longer bypasses the sequential-hashing and concurrency-cap guarantees
+- File-level upload concurrency (`tvSem`) is now correctly limited to the number of connected Telegram accounts regardless of how many separate drop/pick batches are initiated in one session
+
+---
+
 ## [1.2.0] - 2026-03-22
 
 ### Added

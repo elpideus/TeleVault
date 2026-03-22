@@ -263,6 +263,9 @@ export async function uploadFile(
     };
 
     // Upload chunks using a true concurrent sliding window pool
+    const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526]);
+    const MAX_CHUNK_RETRIES = 4;
+
     let nextChunkIdx = 0;
     const worker = async () => {
       while (true) {
@@ -273,17 +276,34 @@ export async function uploadFile(
         const end = Math.min(start + FINAL_CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
-        const chunkRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/chunk/${upload_id}/${i}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/octet-stream" },
-          body: chunk,
-          onProgress: (loaded) => {
-            uploadedPerChunk[i] = loaded;
+        for (let attempt = 0; attempt <= MAX_CHUNK_RETRIES; attempt++) {
+          if (attempt > 0) {
+            // Exponential backoff: 1s, 2s, 4s, 8s
+            await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+            // Reset this chunk's progress before retry
+            uploadedPerChunk[i] = 0;
             reportProgress();
-          },
-        });
+          }
 
-        if (chunkRes.status !== 204) throw new Error(`Chunk ${i} upload failed: ${chunkRes.status}`);
+          const chunkRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/chunk/${upload_id}/${i}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: chunk,
+            onProgress: (loaded) => {
+              uploadedPerChunk[i] = loaded;
+              reportProgress();
+            },
+          });
+
+          if (chunkRes.status === 204) break;
+          if (!RETRYABLE_STATUSES.has(chunkRes.status)) {
+            throw new Error(`Chunk ${i} upload failed: ${chunkRes.status}`);
+          }
+          if (attempt === MAX_CHUNK_RETRIES) {
+            throw new Error(`Chunk ${i} upload failed after ${MAX_CHUNK_RETRIES + 1} attempts: ${chunkRes.status}`);
+          }
+        }
+
         uploadedPerChunk[i] = chunk.size;
         reportProgress();
       }
