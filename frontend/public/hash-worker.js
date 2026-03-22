@@ -114,17 +114,12 @@ function createSHA256() {
 
 async function hashIncremental(file) {
   const hasher = createSHA256();
-  const reader = file.stream().getReader();
-  let processed = 0, lastPost = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    hasher.update(value);
-    processed += value.byteLength;
-    if (processed - lastPost >= CHUNK) {
-      self.postMessage({ type: 'progress', value: processed / file.size });
-      lastPost = processed;
-    }
+  let offset = 0;
+  while (offset < file.size) {
+    const end = Math.min(offset + CHUNK, file.size);
+    hasher.update(new Uint8Array(await file.slice(offset, end).arrayBuffer()));
+    offset = end;
+    self.postMessage({ type: 'progress', value: offset / file.size });
   }
   return hasher.digest();
 }
@@ -132,17 +127,12 @@ async function hashIncremental(file) {
 // ── Strategy 2: WASM SHA-256 ─────────────────────────────────────────────────
 async function hashWithWasm(file) {
   const hasher = new wasm_bindgen.WasmHasher();
-  const reader = file.stream().getReader();
-  let processed = 0, lastPost = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    hasher.update(value);
-    processed += value.byteLength;
-    if (processed - lastPost >= CHUNK) {
-      self.postMessage({ type: 'progress', value: processed / file.size });
-      lastPost = processed;
-    }
+  let offset = 0;
+  while (offset < file.size) {
+    const end = Math.min(offset + CHUNK, file.size);
+    hasher.update(new Uint8Array(await file.slice(offset, end).arrayBuffer()));
+    offset = end;
+    self.postMessage({ type: 'progress', value: offset / file.size });
   }
   const hashBytes = hasher.finalize(); // consumes hasher — do not use after this
   return Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('');
