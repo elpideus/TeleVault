@@ -59,8 +59,8 @@ class Settings(BaseSettings):
     cors_origins: list[str]
     debug_ui: bool = False
     api_port: int = 8000
-    upload_chunk_size: int = 5 * 1024 * 1024  # 5 MB — stays well under Cloudflare's 100s timeout
-    upload_max_parallel_chunks: int = 4  # number of chunks uploaded concurrently by the client
+    upload_chunk_size: int = 2 * 1024 * 1024  # 2 MB — at 20 KB/s this still completes in ~100s, well within Cloudflare's timeout
+    upload_max_parallel_chunks: int = 2  # keep server pressure low; more parallelism caused 524s under load
 
     @field_validator("cors_origins", mode="before")
     @classmethod

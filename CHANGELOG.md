@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.3] - 2026-03-22
+
+### Fixed
+
+- Reduced chunk size from 5 MB to 2 MB and parallel chunk count from 4 to 2: 5 MB chunks at slow upload speeds could exhaust Cloudflare's 100-second origin timeout, causing every attempt to 524 and the upload to fail permanently after 5 retries
+- With 2 MB chunks the same connection needs only ~40 KB/s to stay within the timeout; lower parallelism also reduces concurrent disk writes on the server under heavy load
+
 ## [1.2.2] - 2026-03-22
 
 ### Fixed

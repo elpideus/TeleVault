@@ -1219,7 +1219,7 @@ export function AboutPanel() {
               margin: 0,
             }}
           >
-            Version 1.2.2
+            Version 1.2.3
           </p>
           <p
             style={{
