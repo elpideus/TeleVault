@@ -10,6 +10,15 @@
 
 const CHUNK = 64 * 1024 * 1024; // 64 MB
 
+// ── Strategy 2 init: WASM SHA-256 ────────────────────────────────────────────
+// Kicked off immediately at worker start. onmessage awaits this before hashing.
+// Classic workers don't support top-level await — async IIFE stores the Promise.
+const wasmReadyPromise = (async () => {
+  importScripts('/wasm/sha256.js');           // injects wasm_bindgen global
+  await wasm_bindgen('/wasm/sha256_bg.wasm'); // instantiates the WASM module
+  return true;
+})().catch(() => false); // any failure (404, no SIMD128 support) → false → Strategy 3
+
 // ── Strategy 1: native streaming Web Crypto ──────────────────────────────────
 // crypto.subtle.digest() accepts a ReadableStream in Chrome 130+.
 // We wrap the file's stream in a TransformStream to count bytes for progress.
@@ -115,6 +124,20 @@ async function hashIncremental(file) {
   return hasher.digest();
 }
 
+// ── Strategy 2: WASM SHA-256 ─────────────────────────────────────────────────
+async function hashWithWasm(file) {
+  const hasher = new wasm_bindgen.WasmHasher();
+  let offset = 0;
+  while (offset < file.size) {
+    const end = Math.min(offset + CHUNK, file.size);
+    hasher.update(new Uint8Array(await file.slice(offset, end).arrayBuffer()));
+    offset = end;
+    self.postMessage({ type: 'progress', value: offset / file.size });
+  }
+  const hashBytes = hasher.finalize(); // consumes hasher — do not use after this
+  return Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function bufToHex(buffer) {
   return Array.from(new Uint8Array(buffer))
@@ -124,14 +147,20 @@ function bufToHex(buffer) {
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 self.onmessage = async ({ data: file }) => {
+  const wasmReady = await wasmReadyPromise; // resolves instantly if already initialised
   try {
     let hash;
     try {
-      // Prefer native streaming Web Crypto (Chrome 130+)
+      // Strategy 1: native streaming Web Crypto (Chrome 130+)
       hash = await hashWithStreamingWebCrypto(file);
     } catch {
-      // Fall back to incremental JS SHA-256 in worker
-      hash = await hashIncremental(file);
+      if (wasmReady) {
+        // Strategy 2: WASM SHA-256 (~500–800 MB/s, all modern browsers)
+        hash = await hashWithWasm(file);
+      } else {
+        // Strategy 3: pure-JS SHA-256 fallback (ancient/locked-down browsers)
+        hash = await hashIncremental(file);
+      }
     }
     self.postMessage({ type: 'done', hash });
   } catch (err) {
