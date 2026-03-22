@@ -188,11 +188,40 @@ export async function uploadFile(
       ...(folderSlug ? { folderslug: folderSlug } : {}),
     });
 
+    // Helper: authenticated fetch with one token-refresh retry.
+    const authFetch = async (url: string, init: RequestInit): Promise<Response> => {
+      let res = await fetch(url, {
+        ...init,
+        headers: { ...(init.headers as Record<string, string>), Authorization: `Bearer ${getToken()}` },
+      });
+      if (res.status === 401) {
+        const { refreshToken, setTokens, logout } = useAuthStore.getState();
+        if (refreshToken) {
+          try {
+            const rr = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: refreshToken }),
+            });
+            if (rr.ok) {
+              const { access_token, refresh_token } = await rr.json();
+              setTokens(access_token, refresh_token);
+              res = await fetch(url, {
+                ...init,
+                headers: { ...(init.headers as Record<string, string>), Authorization: `Bearer ${access_token}` },
+              });
+            }
+          } catch { /* fall through */ }
+        }
+        if (res.status === 401) { logout(); throw new Error("TUS upload failed: session expired"); }
+      }
+      return res;
+    };
+
     // Create the TUS upload session
-    const createRes = await fetch(`${baseUrl}/api/v1/files/upload/tus`, {
+    const createRes = await authFetch(`${baseUrl}/api/v1/files/upload/tus`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${getToken()}`,
         "Upload-Length": String(file.size),
         "Upload-Metadata": meta,
         "Tus-Resumable": "1.0.0",
@@ -215,12 +244,9 @@ export async function uploadFile(
         if (attempt > 0) {
           // Re-query server for the authoritative offset before retrying
           try {
-            const headRes = await fetch(tusUrl, {
+            const headRes = await authFetch(tusUrl, {
               method: "HEAD",
-              headers: {
-                Authorization: `Bearer ${getToken()}`,
-                "Tus-Resumable": "1.0.0",
-              },
+              headers: { "Tus-Resumable": "1.0.0" },
             });
             if (headRes.ok) {
               const serverOffset = parseInt(headRes.headers.get("Upload-Offset") ?? String(offset), 10);
@@ -233,11 +259,11 @@ export async function uploadFile(
         const chunkEnd = Math.min(offset + TUS_CHUNK_SIZE, file.size);
         const chunk = file.slice(offset, chunkEnd);
 
-        const { status: patchStatus, newOffset } = await new Promise<{ status: number; newOffset: number }>(
-          (resolve) => {
+        const doPatch = (authToken: string) =>
+          new Promise<{ status: number; newOffset: number }>((resolve) => {
             const xhr = new XMLHttpRequest();
             xhr.open("PATCH", tusUrl);
-            xhr.setRequestHeader("Authorization", `Bearer ${getToken()}`);
+            xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
             xhr.setRequestHeader("Content-Type", "application/offset+octet-stream");
             xhr.setRequestHeader("Upload-Offset", String(offset));
             xhr.setRequestHeader("Tus-Resumable", "1.0.0");
@@ -254,8 +280,34 @@ export async function uploadFile(
             xhr.timeout = 180_000;
             xhr.ontimeout = () => resolve({ status: 524, newOffset: offset });
             xhr.send(chunk);
+          });
+
+        let patchResult = await doPatch(getToken());
+
+        // Token may have expired during a long upload — refresh once and retry.
+        if (patchResult.status === 401) {
+          const { refreshToken, setTokens, logout } = useAuthStore.getState();
+          if (refreshToken) {
+            try {
+              const refreshRes = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ refresh_token: refreshToken }),
+              });
+              if (refreshRes.ok) {
+                const { access_token, refresh_token } = await refreshRes.json();
+                setTokens(access_token, refresh_token);
+                patchResult = await doPatch(access_token);
+              }
+            } catch { /* fall through to logout below */ }
           }
-        );
+          if (patchResult.status === 401) {
+            logout();
+            throw new Error("TUS upload failed: session expired");
+          }
+        }
+
+        const { status: patchStatus, newOffset } = patchResult;
 
         if (patchStatus === 204) {
           offset = newOffset;
@@ -274,12 +326,9 @@ export async function uploadFile(
     }
 
     // Finalize — submit to Telegram worker pool
-    const finalizeRes = await fetch(`${tusUrl}/finalize`, {
+    const finalizeRes = await authFetch(`${tusUrl}/finalize`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${getToken()}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
     });
     if (!finalizeRes.ok) throw new Error(`TUS finalize failed: ${finalizeRes.status}`);
     const data = await finalizeRes.json();

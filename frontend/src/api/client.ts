@@ -91,12 +91,20 @@ const authMiddleware: Middleware = {
     const newToken = await refreshPromise;
     if (!newToken) return response;
 
-    // Retry the original request with new token
-    const retried = new Request(request, {
-      headers: new Headers(request.headers),
-    });
-    retried.headers.set("Authorization", `Bearer ${newToken}`);
-    return fetch(retried);
+    // Retry the original request with new token.
+    // Guard against "body already consumed" — happens when a POST body was
+    // read during the first attempt (e.g. check-hash, file upload).  In that
+    // case we can't clone the request, so we just return the 401 and let the
+    // individual caller decide how to handle it.
+    try {
+      const retried = new Request(request, {
+        headers: new Headers(request.headers),
+      });
+      retried.headers.set("Authorization", `Bearer ${newToken}`);
+      return fetch(retried);
+    } catch {
+      return response;
+    }
   },
 };
 
