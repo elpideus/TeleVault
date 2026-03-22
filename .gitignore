@@ -1,5 +1,6 @@
 .claude
 .worktrees
+.playwright-mcp
 
 # The following was created by https://www.toptal.com/developers/gitignore/api/node,dotenv,venv,react,python
 # Edit at https://www.toptal.com/developers/gitignore?templates=node,dotenv,venv,react,python

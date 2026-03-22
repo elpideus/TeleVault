@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-03-22
+
+### Added
+
+- WASM SHA-256 hashing worker: Rust `sha2` crate compiled to WebAssembly via wasm-pack, replacing the pure-JS fallback for large-file uploads
+- Three-strategy hash pipeline: (1) native streaming `crypto.subtle.digest` for Chrome 130+ (near-hardware speed), (2) WASM SHA-256 (~320 MB/s) for all modern browsers, (3) pure-JS fallback for legacy environments
+- Prefetch optimisation: chunk N+1 is read from disk concurrently while WASM hashes chunk N, overlapping I/O with computation and reducing 14 GB hash time from ~6 minutes to under 2 minutes
+- `wasm-pack` multi-stage Docker build: dedicated `wasm-builder` stage (`rust:1-slim`) injects compiled WASM artifacts into the Node build stage, keeping the image lean
+- Cross-platform `build:wasm` npm script (`frontend/scripts/build-wasm.mjs`) for local development outside Docker
+
+---
+
 ## [1.1.1] - 2026-03-21
 
 ### Added
