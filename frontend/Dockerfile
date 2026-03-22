@@ -1,6 +1,6 @@
 # Stage 0: Build WASM
 FROM rust:1-slim AS wasm-builder
-RUN cargo install wasm-pack --version 0.13.1 --locked
+RUN cargo install wasm-pack --version 0.14.0 --locked
 WORKDIR /build/wasm-sha256
 COPY wasm-sha256/ .
 RUN RUSTFLAGS="-C target-feature=+simd128" \
