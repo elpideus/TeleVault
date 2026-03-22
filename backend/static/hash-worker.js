@@ -114,12 +114,18 @@ function createSHA256() {
 
 async function hashIncremental(file) {
   const hasher = createSHA256();
-  let offset = 0;
-  while (offset < file.size) {
-    const end = Math.min(offset + CHUNK, file.size);
-    hasher.update(new Uint8Array(await file.slice(offset, end).arrayBuffer()));
-    offset = end;
-    self.postMessage({ type: 'progress', value: offset / file.size });
+  // Prefetch: start reading chunk N+1 while hashing chunk N.
+  // file.slice().arrayBuffer() triggers a read in the browser process immediately,
+  // even before we await it — so the read overlaps with synchronous JS/WASM work.
+  let prefetch = file.slice(0, Math.min(CHUNK, file.size)).arrayBuffer();
+  for (let offset = 0; offset < file.size; offset += CHUNK) {
+    const chunk = await prefetch;
+    const next = offset + CHUNK;
+    if (next < file.size) {
+      prefetch = file.slice(next, Math.min(next + CHUNK, file.size)).arrayBuffer();
+    }
+    hasher.update(new Uint8Array(chunk));
+    self.postMessage({ type: 'progress', value: Math.min(offset + CHUNK, file.size) / file.size });
   }
   return hasher.digest();
 }
@@ -127,12 +133,18 @@ async function hashIncremental(file) {
 // ── Strategy 2: WASM SHA-256 ─────────────────────────────────────────────────
 async function hashWithWasm(file) {
   const hasher = new wasm_bindgen.WasmHasher();
-  let offset = 0;
-  while (offset < file.size) {
-    const end = Math.min(offset + CHUNK, file.size);
-    hasher.update(new Uint8Array(await file.slice(offset, end).arrayBuffer()));
-    offset = end;
-    self.postMessage({ type: 'progress', value: offset / file.size });
+  // Prefetch: start reading chunk N+1 while WASM hashes chunk N synchronously.
+  // During hasher.update() the JS event loop is blocked but the browser process
+  // continues the disk read — so on fast storage the next chunk arrives "free".
+  let prefetch = file.slice(0, Math.min(CHUNK, file.size)).arrayBuffer();
+  for (let offset = 0; offset < file.size; offset += CHUNK) {
+    const chunk = await prefetch;
+    const next = offset + CHUNK;
+    if (next < file.size) {
+      prefetch = file.slice(next, Math.min(next + CHUNK, file.size)).arrayBuffer();
+    }
+    hasher.update(new Uint8Array(chunk)); // synchronous; browser reads next chunk during this
+    self.postMessage({ type: 'progress', value: Math.min(offset + CHUNK, file.size) / file.size });
   }
   const hashBytes = hasher.finalize(); // consumes hasher — do not use after this
   return Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('');
