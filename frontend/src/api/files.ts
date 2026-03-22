@@ -262,13 +262,13 @@ export async function uploadFile(
       onUploadProgress?.(Math.round((totalUploaded / file.size) * 100));
     };
 
-    // Upload chunks in parallel, CONCURRENCY at a time.
-    for (let batch = 0; batch < totalChunks; batch += CONCURRENCY) {
-      const indices = Array.from(
-        { length: Math.min(CONCURRENCY, totalChunks - batch) },
-        (_, j) => batch + j,
-      );
-      await Promise.all(indices.map(async (i) => {
+    // Upload chunks using a true concurrent sliding window pool
+    let nextChunkIdx = 0;
+    const worker = async () => {
+      while (true) {
+        const i = nextChunkIdx++;
+        if (i >= totalChunks) break;
+
         const start = i * FINAL_CHUNK_SIZE;
         const end = Math.min(start + FINAL_CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
@@ -286,8 +286,12 @@ export async function uploadFile(
         if (chunkRes.status !== 204) throw new Error(`Chunk ${i} upload failed: ${chunkRes.status}`);
         uploadedPerChunk[i] = chunk.size;
         reportProgress();
-      }));
-    }
+      }
+    };
+
+    // Spin up CONCURRENCY workers to process chunks continuously
+    const workers = Array.from({ length: Math.min(CONCURRENCY, totalChunks) }, () => worker());
+    await Promise.all(workers);
 
     const finalizeRes = await doAuthXhr(`${baseUrl}/api/v1/files/upload/finalize/${upload_id}`, {
       method: "POST",

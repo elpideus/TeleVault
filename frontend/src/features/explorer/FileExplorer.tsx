@@ -13,6 +13,7 @@ import { generateUUID } from "../../utils/uuid";
 import { uploadFile } from "../../api/files";
 import { useAuthStore } from "../../store/authStore";
 import { getBaseUrl } from "../../api/client";
+import { getConcurrency } from "../../api/accounts";
 import { useExplorerStore } from "../../store/explorerStore";
 import { useExplorerActions } from "../../hooks/useExplorerActions";
 import { useSelectionStore } from "../../store/selectionStore";
@@ -264,19 +265,21 @@ export function FileExplorer() {
         });
       }
 
-      // Three-stage pipeline:
-      //   hashSem(1)  — one file hashes at a time; released as soon as hash
-      //                 is done so the next file can hash while this one waits
-      //                 for its TeleVault XHR slot.
-      //   tvSem(1)    — one file uploads to TeleVault at a time; released when
-      //                 the XHR completes so the next file can start uploading
-      //                 while Telegram processes the current one.
-      //   Telegram    — N-worker pool on the backend; runs independently.
-      //
-      // At steady state: 1 file hashing, 1 uploading to TeleVault, N in Telegram.
+      // 三-stage pipeline:
+      //   hashSem(1)  - one file hashes at a time
+      //   tvSem(N)    - N files upload XHR simultaneously based on connected accounts
+      //   Telegram    - backend N-worker pool
       void (async () => {
+        let n = 1;
+        try {
+          const result = await getConcurrency();
+          n = Math.max(1, result.concurrency);
+        } catch (e) {
+          console.error("Failed to fetch concurrency, defaulting to 1", e);
+        }
+
         const hashSem = createSemaphore(1);
-        const tvSem = createSemaphore(1);
+        const tvSem = createSemaphore(n);
 
         await Promise.allSettled(
           fileEntries.map(async ({ file, tempId }) => {
