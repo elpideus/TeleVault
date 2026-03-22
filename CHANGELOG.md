@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] - 2026-03-22
+
+### Added
+
+- TUS resumable upload protocol for large files when behind Cloudflare: detected automatically via the `CF-Ray` response header, no configuration required
+- On Cloudflare-proxied deployments, large file uploads (> 50 MB) now use sequential 2 MB TUS chunks instead of the parallel custom protocol; if Cloudflare drops a connection mid-chunk the client sends a `HEAD` request to retrieve the server's authoritative byte offset and resumes from exactly that point, eliminating the "Failed to construct Request" failures caused by mid-chunk 524 timeouts
+- New backend TUS endpoints: `POST /upload/tus` (create), `HEAD /upload/tus/{id}` (offset probe), `PATCH /upload/tus/{id}` (append), `POST /upload/tus/{id}/finalize` (submit to Telegram worker pool)
+- The existing parallel chunked path is retained unchanged for non-Cloudflare deployments
+
+### Changed
+
+- Extracted shared `_sanitize_filename()` helper in the backend, removing three identical inline copies
+
+---
+
 ## [1.2.3] - 2026-03-22
 
 ### Fixed

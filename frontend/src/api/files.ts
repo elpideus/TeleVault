@@ -163,11 +163,133 @@ export async function uploadFile(
     throw new Error(`Upload failed: ${checkRes.status} ${errMsg}`);
   }
 
+  // Detect Cloudflare by checking for the CF-Ray header on any API response.
+  const IS_CLOUDFLARE = checkRes.headers.has("cf-ray");
+
   // 3. Choose upload strategy: direct (small) or chunked (large)
   const USE_CHUNKING = file.size > 50 * 1024 * 1024; // Use chunks for files > 50MB
 
+  if (USE_CHUNKING && IS_CLOUDFLARE) {
+    // --- TUS RESUMABLE UPLOAD PATH (used when behind Cloudflare) ---
+    // TUS uploads chunks sequentially with server-side offset tracking,
+    // enabling true resumability when Cloudflare drops a connection mid-chunk.
+    const TUS_CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB — fits within CF's 100s timeout
+
+    // Encode TUS metadata (base64 key-value pairs)
+    const encodeMeta = (kv: Record<string, string>) =>
+      Object.entries(kv)
+        .map(([k, v]) => `${k} ${btoa(unescape(encodeURIComponent(v)))}`)
+        .join(",");
+
+    const meta = encodeMeta({
+      filename: file.name,
+      filehash: hash,
+      mimetype: file.type || "",
+      ...(folderSlug ? { folderslug: folderSlug } : {}),
+    });
+
+    // Create the TUS upload session
+    const createRes = await fetch(`${baseUrl}/api/v1/files/upload/tus`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        "Upload-Length": String(file.size),
+        "Upload-Metadata": meta,
+        "Tus-Resumable": "1.0.0",
+      },
+    });
+    if (createRes.status !== 201) throw new Error(`TUS create failed: ${createRes.status}`);
+
+    const location = createRes.headers.get("Location");
+    if (!location) throw new Error("TUS: no Location header in create response");
+    const tusUrl = `${baseUrl}${location}`;
+
+    const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526]);
+    const MAX_RETRIES = 6;
+
+    // Sequentially upload chunks; on failure HEAD to get server offset and resume.
+    let offset = 0;
+    while (offset < file.size) {
+      let chunkSent = false;
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+          // Re-query server for the authoritative offset before retrying
+          try {
+            const headRes = await fetch(tusUrl, {
+              method: "HEAD",
+              headers: {
+                Authorization: `Bearer ${getToken()}`,
+                "Tus-Resumable": "1.0.0",
+              },
+            });
+            if (headRes.ok) {
+              const serverOffset = parseInt(headRes.headers.get("Upload-Offset") ?? String(offset), 10);
+              offset = serverOffset;
+            }
+          } catch { /* keep local offset on network error */ }
+          await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+        }
+
+        const chunkEnd = Math.min(offset + TUS_CHUNK_SIZE, file.size);
+        const chunk = file.slice(offset, chunkEnd);
+
+        const { status: patchStatus, newOffset } = await new Promise<{ status: number; newOffset: number }>(
+          (resolve) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("PATCH", tusUrl);
+            xhr.setRequestHeader("Authorization", `Bearer ${getToken()}`);
+            xhr.setRequestHeader("Content-Type", "application/offset+octet-stream");
+            xhr.setRequestHeader("Upload-Offset", String(offset));
+            xhr.setRequestHeader("Tus-Resumable", "1.0.0");
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable) {
+                onUploadProgress?.(Math.round(((offset + e.loaded) / file.size) * 100));
+              }
+            };
+            xhr.onload = () => {
+              const newOff = parseInt(xhr.getResponseHeader("Upload-Offset") ?? String(offset), 10);
+              resolve({ status: xhr.status, newOffset: newOff });
+            };
+            xhr.onerror = () => resolve({ status: 0, newOffset: offset });
+            xhr.timeout = 180_000;
+            xhr.ontimeout = () => resolve({ status: 524, newOffset: offset });
+            xhr.send(chunk);
+          }
+        );
+
+        if (patchStatus === 204) {
+          offset = newOffset;
+          chunkSent = true;
+          onUploadProgress?.(Math.round((offset / file.size) * 100));
+          break;
+        }
+        if (!RETRYABLE_STATUSES.has(patchStatus) && patchStatus !== 409) {
+          throw new Error(`TUS PATCH failed with ${patchStatus}`);
+        }
+        if (attempt === MAX_RETRIES - 1) {
+          throw new Error(`TUS PATCH failed after ${MAX_RETRIES} attempts: ${patchStatus}`);
+        }
+      }
+      if (!chunkSent) throw new Error("TUS: chunk upload loop exited without sending");
+    }
+
+    // Finalize — submit to Telegram worker pool
+    const finalizeRes = await fetch(`${tusUrl}/finalize`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!finalizeRes.ok) throw new Error(`TUS finalize failed: ${finalizeRes.status}`);
+    const data = await finalizeRes.json();
+    onUploadProgress?.(100);
+    onProgress?.(data.operation_id, data.file_id);
+    return data;
+  }
+
   if (USE_CHUNKING) {
-    // --- CHUNKED UPLOAD PATH ---
+    // --- CHUNKED UPLOAD PATH (direct/non-Cloudflare) ---
     const doAuthXhr = (
       url: string, 
       options: { 

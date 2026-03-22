@@ -1,8 +1,10 @@
 import asyncio
+import base64
 import os
 import re
 import tempfile
 import uuid
+from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import quote
 
@@ -219,23 +221,8 @@ async def upload_file(
         folder_slug = folder_slug_target.value.decode()
         channel_id_raw = channel_id_target.value.decode() if channel_id_target.value else None
         channel_id = uuid.UUID(channel_id_raw) if channel_id_raw else None
-        def _sanitize(s: str) -> str:
-            s = re.sub(r"[^A-Za-z0-9_\-]", "_", s)
-            s = re.sub(r"[_\-]{2,}", "_", s)
-            return s.strip("_-")
-
         raw_filename = filename_target.value.decode() if filename_target.value else ""
-        # Preserve the stem and extension separately, then sanitize each
-        if raw_filename:
-            _stem, _dot, _ext = raw_filename.rpartition(".")
-            if _dot:
-                _stem_clean = _sanitize(_stem) or "upload"
-                _ext_clean = _sanitize(_ext)
-                filename = f"{_stem_clean}.{_ext_clean}" if _ext_clean else _stem_clean
-            else:
-                filename = _sanitize(raw_filename) or "upload"
-        else:
-            filename = "upload"
+        filename = _sanitize_filename(raw_filename)
         mime_type = mime_type_target.value.decode() if mime_type_target.value else None
         total_size_raw = total_size_target.value.decode() if total_size_target.value else None
         total_size = int(total_size_raw) if total_size_raw else os.path.getsize(tmp_path)
@@ -314,6 +301,23 @@ async def upload_file(
 _chunked_uploads: dict[str, tuple[str, int]] = {}
 
 
+@dataclass
+class _TusUpload:
+    tmp_path: str
+    total_size: int
+    offset: int
+    owner_id: int
+    filename: str
+    file_hash: str
+    mime_type: Optional[str]
+    folder_slug: Optional[str]
+    channel_id: Optional[uuid.UUID]
+
+
+# upload_id -> TUS state
+_tus_uploads: dict[str, _TusUpload] = {}
+
+
 def _preallocate_file(path: str, size: int) -> None:
     with open(path, "wb") as f:
         f.seek(size - 1)
@@ -324,6 +328,23 @@ def _write_chunk_at_offset(path: str, offset: int, data: bytes) -> None:
     with open(path, "r+b") as f:
         f.seek(offset)
         f.write(data)
+
+
+def _sanitize_filename(raw_filename: str) -> str:
+    def _sanitize(s: str) -> str:
+        s = re.sub(r"[^A-Za-z0-9_\-]", "_", s)
+        s = re.sub(r"[_\-]{2,}", "_", s)
+        return s.strip("_-")
+
+    if raw_filename:
+        _stem, _dot, _ext = raw_filename.rpartition(".")
+        if _dot:
+            _stem_clean = _sanitize(_stem) or "upload"
+            _ext_clean = _sanitize(_ext)
+            return f"{_stem_clean}.{_ext_clean}" if _ext_clean else _stem_clean
+        else:
+            return _sanitize(raw_filename) or "upload"
+    return "upload"
 
 
 @router.post("/upload/initialize", status_code=200)
@@ -383,23 +404,7 @@ async def finalize_chunked_upload(
     if not os.path.exists(tmp_path):
         raise HTTPException(status_code=404, detail="Temporary file missing.")
 
-    # Sanitize and resolve as in upload_file...
-    def _sanitize(s: str) -> str:
-        s = re.sub(r"[^A-Za-z0-9_\-]", "_", s)
-        s = re.sub(r"[_\-]{2,}", "_", s)
-        return s.strip("_-")
-
-    raw_filename = body.filename
-    if raw_filename:
-        _stem, _dot, _ext = raw_filename.rpartition(".")
-        if _dot:
-            _stem_clean = _sanitize(_stem) or "upload"
-            _ext_clean = _sanitize(_ext)
-            filename = f"{_stem_clean}.{_ext_clean}" if _ext_clean else _stem_clean
-        else:
-            filename = _sanitize(raw_filename) or "upload"
-    else:
-        filename = "upload"
+    filename = _sanitize_filename(body.filename)
 
     # Resolve folder
     if body.folder_slug:
@@ -447,6 +452,193 @@ async def finalize_chunked_upload(
         file_id=file_id,
         original_name=filename,
         total_size=body.total_size,
+        split_count=split_count,
+        folder_id=folder.id if folder else None,
+    )
+
+
+# --- TUS Resumable Upload Endpoints ---
+
+@router.post("/upload/tus", status_code=201)
+async def tus_create_upload(
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """TUS: Create a new resumable upload session."""
+    upload_length = request.headers.get("Upload-Length")
+    if not upload_length:
+        raise HTTPException(status_code=400, detail="Upload-Length header required")
+
+    total_size = int(upload_length)
+
+    # Parse TUS Upload-Metadata (comma-separated "key base64value" pairs)
+    metadata: dict[str, str] = {}
+    for pair in request.headers.get("Upload-Metadata", "").split(","):
+        pair = pair.strip()
+        if " " in pair:
+            k, v = pair.split(" ", 1)
+            try:
+                metadata[k] = base64.b64decode(v).decode()
+            except Exception:
+                metadata[k] = ""
+        elif pair:
+            metadata[pair] = ""
+
+    upload_id = str(uuid.uuid4())
+    fd, tmp_path = tempfile.mkstemp()
+    os.close(fd)
+    await asyncio.to_thread(_preallocate_file, tmp_path, total_size)
+
+    raw_channel_id = metadata.get("channelid") or metadata.get("channel_id")
+    _tus_uploads[upload_id] = _TusUpload(
+        tmp_path=tmp_path,
+        total_size=total_size,
+        offset=0,
+        owner_id=current_user.telegram_id,
+        filename=metadata.get("filename", "upload"),
+        file_hash=metadata.get("filehash", metadata.get("file_hash", "")),
+        mime_type=metadata.get("mimetype") or metadata.get("mime_type") or None,
+        folder_slug=metadata.get("folderslug") or metadata.get("folder_slug") or None,
+        channel_id=uuid.UUID(raw_channel_id) if raw_channel_id else None,
+    )
+
+    from fastapi.responses import Response
+    return Response(
+        status_code=201,
+        headers={
+            "Location": f"/api/v1/files/upload/tus/{upload_id}",
+            "Tus-Resumable": "1.0.0",
+        },
+    )
+
+
+@router.head("/upload/tus/{upload_id}", status_code=200)
+async def tus_head(
+    upload_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """TUS: Return current upload offset so client can resume."""
+    entry = _tus_uploads.get(upload_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="TUS upload not found")
+    if entry.owner_id != current_user.telegram_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from fastapi.responses import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Upload-Offset": str(entry.offset),
+            "Upload-Length": str(entry.total_size),
+            "Tus-Resumable": "1.0.0",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.patch("/upload/tus/{upload_id}", status_code=204)
+async def tus_patch(
+    upload_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """TUS: Append data at the current offset."""
+    entry = _tus_uploads.get(upload_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="TUS upload not found")
+    if entry.owner_id != current_user.telegram_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    upload_offset_hdr = request.headers.get("Upload-Offset")
+    if upload_offset_hdr is None:
+        raise HTTPException(status_code=400, detail="Upload-Offset header required")
+
+    client_offset = int(upload_offset_hdr)
+    if client_offset != entry.offset:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Offset conflict: server has {entry.offset}, client sent {client_offset}",
+        )
+
+    data = b"".join([chunk async for chunk in request.stream()])
+    await asyncio.to_thread(_write_chunk_at_offset, entry.tmp_path, entry.offset, data)
+    entry.offset += len(data)
+
+    from fastapi.responses import Response
+    return Response(
+        status_code=204,
+        headers={
+            "Upload-Offset": str(entry.offset),
+            "Tus-Resumable": "1.0.0",
+        },
+    )
+
+
+@router.post("/upload/tus/{upload_id}/finalize", status_code=202, response_model=FileUploadOut)
+async def tus_finalize(
+    upload_id: str,
+    session: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
+):
+    """TUS: Finalize the completed upload and start Telegram processing."""
+    entry = _tus_uploads.pop(upload_id, None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="TUS upload not found")
+    if entry.owner_id != current_user.telegram_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if entry.offset != entry.total_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload incomplete: {entry.offset}/{entry.total_size} bytes received",
+        )
+    if not os.path.exists(entry.tmp_path):
+        raise HTTPException(status_code=404, detail="Temporary file missing")
+
+    filename = _sanitize_filename(entry.filename)
+
+    folder = None
+    if entry.folder_slug:
+        folder = await folders_svc.get_folder_by_slug(
+            session, current_user.telegram_id, entry.folder_slug
+        )
+
+    channel = await upload_svc.resolve_channel(
+        session, current_user.telegram_id, entry.channel_id, folder
+    )
+
+    operation_id, file_id, split_count, channel_record = await upload_svc.prepare_upload(
+        session=session,
+        registry=operation_registry,
+        owner_id=current_user.telegram_id,
+        folder_id=folder.id if folder else None,
+        channel_id=channel.id,
+        filename=filename,
+        mime_type=entry.mime_type,
+        total_size=entry.total_size,
+        file_hash=entry.file_hash,
+    )
+
+    upload_worker_pool.submit(current_user.telegram_id, UploadJob(
+        operation_id=operation_id,
+        file_id=file_id,
+        owner_id=current_user.telegram_id,
+        folder_id=folder.id if folder else None,
+        channel=channel_record,
+        filename=filename,
+        mime_type=entry.mime_type,
+        total_size=entry.total_size,
+        file_hash=entry.file_hash,
+        tmp_path=entry.tmp_path,
+        account_offset=0,
+    ))
+
+    return FileUploadOut(
+        operation_id=operation_id,
+        file_id=file_id,
+        original_name=filename,
+        total_size=entry.total_size,
         split_count=split_count,
         folder_id=folder.id if folder else None,
     )
