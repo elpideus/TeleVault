@@ -1,3 +1,11 @@
+# Stage 0: Build WASM
+FROM rust:1-slim AS wasm-builder
+RUN cargo install wasm-pack
+WORKDIR /build/wasm-sha256
+COPY wasm-sha256/ .
+RUN RUSTFLAGS="-C target-feature=+simd128" \
+    wasm-pack build --target no-modules --release --out-dir /wasm-out
+
 # Stage 1: Build
 FROM node:22-alpine AS build
 
@@ -7,8 +15,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-# Copy source and build
+# Copy source and inject WASM artifacts from wasm-builder
 COPY . .
+COPY --from=wasm-builder /wasm-out ./public/wasm/
 
 # Pass build arguments (optional, defaults are used if not provided)
 ARG VITE_API_BASE_URL
@@ -16,7 +25,7 @@ ARG VITE_THEME=default
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_THEME=$VITE_THEME
 
-RUN npm run build
+RUN npm run build:frontend
 
 # Stage 2: Serve
 FROM nginx:stable-alpine
