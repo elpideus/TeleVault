@@ -173,7 +173,7 @@ export async function uploadFile(
     // --- TUS RESUMABLE UPLOAD PATH (used when behind Cloudflare) ---
     // TUS uploads chunks sequentially with server-side offset tracking,
     // enabling true resumability when Cloudflare drops a connection mid-chunk.
-    const TUS_CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB — fits within CF's 100s timeout
+    const TUS_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB — minimises round-trips through CF tunnel; server streams to disk so no RAM cost
 
     // Encode TUS metadata (base64 key-value pairs)
     const encodeMeta = (kv: Record<string, string>) =>

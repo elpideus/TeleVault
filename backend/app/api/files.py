@@ -561,9 +561,15 @@ async def tus_patch(
             detail=f"Offset conflict: server has {entry.offset}, client sent {client_offset}",
         )
 
-    data = b"".join([chunk async for chunk in request.stream()])
-    await asyncio.to_thread(_write_chunk_at_offset, entry.tmp_path, entry.offset, data)
-    entry.offset += len(data)
+    # Stream directly to disk at the correct offset — avoids buffering the entire
+    # chunk in RAM, which allows arbitrarily large TUS chunk sizes.
+    bytes_written = 0
+    with open(entry.tmp_path, "r+b") as f:
+        f.seek(entry.offset)
+        async for chunk in request.stream():
+            f.write(chunk)
+            bytes_written += len(chunk)
+    entry.offset += bytes_written
 
     from fastapi.responses import Response
     return Response(
