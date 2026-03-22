@@ -266,15 +266,27 @@ async def execute_upload(
             # tight loop can starve the event loop, causing Uvicorn to hang on other requests.
             await asyncio.sleep(0.01)
 
+        # Allow at least 30 min or 50 KB/s, whichever is longer.
+        # Prevents indefinite hangs when a Telegram session silently expires.
+        upload_timeout = max(1800, split_size // 51200)
+
         reader = _SplitReader(tmp_path, offset, split_size, split_name)
         try:
-            result = await upload_document(
-                client,
-                telegram_channel_id,
-                reader,
-                filename=split_name,
-                size=split_size,
-                progress_callback=_on_progress,
+            result = await asyncio.wait_for(
+                upload_document(
+                    client,
+                    telegram_channel_id,
+                    reader,
+                    filename=split_name,
+                    size=split_size,
+                    progress_callback=_on_progress,
+                ),
+                timeout=upload_timeout,
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                f"Telegram upload timed out after {upload_timeout}s "
+                f"(split {split_index}, {split_size} bytes)"
             )
         finally:
             reader.close()

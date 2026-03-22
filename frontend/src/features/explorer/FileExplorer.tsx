@@ -77,6 +77,11 @@ export function FileExplorer() {
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Shared across all upload batches so hashing is always sequential and the
+  // total number of concurrent TeleVault XHR uploads is capped globally.
+  const hashSemRef = useRef(createSemaphore(1));
+  const tvSemRef = useRef<ReturnType<typeof createSemaphore> | null>(null);
+
   // ── Data fetching ──────────────────────────────────────────────────────────
   const {
     folders: allFolders,
@@ -270,20 +275,24 @@ export function FileExplorer() {
       //   tvSem(N)    - N files upload XHR simultaneously based on connected accounts
       //   Telegram    - backend N-worker pool
       void (async () => {
-        let n = 1;
-        try {
-          const result = await getConcurrency();
-          n = Math.max(1, result.concurrency);
-        } catch (e) {
-          console.error("Failed to fetch concurrency, defaulting to 1", e);
+        // Initialise tvSem once — reuse across batches so the cap is global.
+        if (!tvSemRef.current) {
+          let n = 1;
+          try {
+            const result = await getConcurrency();
+            n = Math.max(1, result.concurrency);
+          } catch (e) {
+            console.error("Failed to fetch concurrency, defaulting to 1", e);
+          }
+          tvSemRef.current = createSemaphore(n);
         }
 
-        const hashSem = createSemaphore(1);
-        const tvSem = createSemaphore(n);
+        const hashSem = hashSemRef.current;
+        const tvSem = tvSemRef.current;
 
         await Promise.allSettled(
           fileEntries.map(async ({ file, tempId }) => {
-            // Hash sequentially — only one file at a time.
+            // Hash sequentially — only one file at a time across all batches.
             await hashSem.acquire();
             setStatus(tempId, "hashing");
 
