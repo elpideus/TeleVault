@@ -1,4 +1,5 @@
 import asyncio
+import importlib.metadata
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -86,7 +87,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="TeleVault API", version="1.0.11", lifespan=lifespan)
+    application = FastAPI(title="TeleVault API", version=importlib.metadata.version("televault"), lifespan=lifespan)
 
     application.add_middleware(
         CORSMiddleware,

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.4] - 2026-03-23
+
+### Fixed
+
+- **Backend**: API version is now read dynamically from `pyproject.toml` via
+  `importlib.metadata` instead of being hardcoded in `main.py`.
+- **Frontend**: The "About" panel now displays the real app version at build
+  time via the `__APP_VERSION__` constant injected by Vite, replacing the
+  previously hardcoded version string.
+
+### Internal
+
+- **Frontend**: Vite config now injects `__APP_VERSION__` from `package.json`
+  at build time, making the version single-sourced across the entire project.
+
+---
+
 ## [1.3.3] - 2026-03-23
 
 ### Added
