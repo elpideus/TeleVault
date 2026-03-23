@@ -28,7 +28,10 @@ function DialogOverlay({ visible }: { visible: boolean }) {
             exit={{ opacity: 0, transition: { duration: 0.14, ease: "easeIn" } }}
             transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.18, ease: "easeOut" }}
             className="fixed inset-0 z-40"
-            style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(2px)" }}
+            style={{
+              background: "var(--tv-overlay-bg)",
+              backdropFilter: "blur(var(--tv-overlay-blur))",
+            }}
           />
         </Dialog.Overlay>
       )}

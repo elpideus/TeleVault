@@ -10,7 +10,7 @@ class ProgressEvent:
     pct: float
     bytes_done: int
     bytes_total: int
-    status: str  # "progress" | "done" | "error" | "ping"
+    status: str  # "progress" | "done" | "error" | "cancelled" | "ping"
     message: str | None = None
     error: str | None = None
 
@@ -30,6 +30,8 @@ class OperationRegistry:
         # owner_id → set of per-consumer listener queues
         self._user_listeners: dict[int, set[asyncio.Queue[ProgressEvent]]] = {}
         self._op_to_owner: dict[str, int] = {}
+        # operation_ids that have been requested to cancel (checked by workers)
+        self._cancelled_ops: set[str] = set()
 
     def create_operation(self, owner_id: int) -> str:
         operation_id = str(uuid4())
@@ -98,6 +100,38 @@ class OperationRegistry:
     def has_operation(self, operation_id: str) -> bool:
         return operation_id in self._listeners
 
+    def is_cancelled(self, operation_id: str) -> bool:
+        """Return True if cancel has been requested for this operation."""
+        return operation_id in self._cancelled_ops
+
+    async def emit_cancelled(self, operation_id: str, message: str | None = None) -> None:
+        """Broadcast a cancelled event and schedule cleanup."""
+        self._cancelled_ops.add(operation_id)
+        self._broadcast(operation_id, ProgressEvent(
+            operation_id=operation_id,
+            pct=0.0,
+            bytes_done=0,
+            bytes_total=0,
+            status="cancelled",
+            message=message,
+        ))
+
+        def _cleanup() -> None:
+            self._listeners.pop(operation_id, None)
+            self._op_to_owner.pop(operation_id, None)
+            self._cancelled_ops.discard(operation_id)
+
+        asyncio.get_event_loop().call_later(30, _cleanup)
+
+    def cancel_operation(self, operation_id: str) -> None:
+        """Mark an operation as cancelled synchronously (for workers to poll).
+
+        Callers should also call emit_cancelled() to notify SSE consumers.
+        This is the fast path used by the cancel endpoint before awaiting
+        emit_cancelled.
+        """
+        self._cancelled_ops.add(operation_id)
+
     async def stream(
         self, operation_id: str
     ) -> AsyncGenerator[ProgressEvent, None]:
@@ -118,7 +152,7 @@ class OperationRegistry:
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=20.0)
                     yield event
-                    if event.status in ("done", "error"):
+                    if event.status in ("done", "error", "cancelled"):
                         break
                 except asyncio.TimeoutError:
                     # Synthetic ping — the HTTP handler converts this to an

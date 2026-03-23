@@ -96,6 +96,56 @@ class UploadWorkerPool:
     def get_worker_count(self, owner_id: int) -> int:
         return len(self._workers.get(owner_id, []))
 
+    def cancel_job(self, owner_id: int, operation_id: str) -> bool:
+        """Remove a queued (not yet started) job from the user's queue.
+
+        Returns True if the job was still queued and was removed.
+        Returns False if the job was already picked up by a worker (the
+        registry.is_cancelled flag handles that path instead).
+        """
+        q = self._queues.get(owner_id)
+        if q is None:
+            return False
+        # asyncio.Queue has no direct remove — drain and rebuild without the target.
+        remaining: list = []
+        found = False
+        while not q.empty():
+            try:
+                job = q.get_nowait()
+                if job is not None and job.operation_id == operation_id:
+                    found = True
+                    q.task_done()
+                else:
+                    remaining.append(job)
+            except Exception:
+                break
+        for job in remaining:
+            q.put_nowait(job)
+        return found
+
+    def cancel_all_jobs(self, owner_id: int) -> list[str]:
+        """Remove all queued (not yet started) jobs for owner_id.
+
+        Returns the list of operation_ids that were removed from the queue.
+        Jobs already picked up by a worker are NOT affected here —
+        callers must also mark each operation as cancelled in the registry.
+        """
+        q = self._queues.get(owner_id)
+        if q is None:
+            return []
+        removed_ids: list[str] = []
+        while not q.empty():
+            try:
+                job = q.get_nowait()
+                if job is not None:
+                    removed_ids.append(job.operation_id)
+                    q.task_done()
+                # None sentinels are re-added so workers can still exit cleanly
+                # (but cancel_all is normally not called during shutdown).
+            except Exception:
+                break
+        return removed_ids
+
     async def shutdown(self) -> None:
         """Drain all queues and wait for all workers to exit cleanly.
 

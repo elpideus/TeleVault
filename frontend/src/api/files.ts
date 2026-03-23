@@ -15,6 +15,25 @@ function getToken(): string {
   return useAuthStore.getState().accessToken ?? "";
 }
 
+/** Cancel a single active upload on the server. */
+export async function cancelUpload(operationId: string): Promise<void> {
+  const baseUrl = getBaseUrl();
+  await fetch(`${baseUrl}/api/v1/files/upload/${encodeURIComponent(operationId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  // Ignore errors — if the operation is already gone that's fine
+}
+
+/** Cancel ALL active uploads for the current user on the server. */
+export async function cancelAllUploads(): Promise<void> {
+  const baseUrl = getBaseUrl();
+  await fetch(`${baseUrl}/api/v1/files/upload`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+}
+
 export async function listFiles(folderSlug?: string, page = 1, pageSize = 50) {
   const { data, error } = await apiClient.GET("/api/v1/files/", {
     params: {
@@ -109,6 +128,7 @@ export async function uploadFile(
   onHashProgress?: (progress: number) => void,
   onUploadProgress?: (progress: number) => void,
   onHashComplete?: () => Promise<void>,
+  signal?: AbortSignal,
 ) {
   const token = getToken();
   const baseUrl = getBaseUrl();
@@ -116,23 +136,32 @@ export async function uploadFile(
   // 1. Compute Hash via Worker
   const hash = await new Promise<string>((resolve, reject) => {
     const worker = new Worker('/hash-worker.js');
+    // If aborted before hashing completes, terminate the worker.
+    const onAbort = () => { worker.terminate(); reject(new Error("Upload cancelled")); };
+    signal?.addEventListener("abort", onAbort, { once: true });
     worker.onmessage = ({ data }) => {
       if (data.type === 'progress') {
         onHashProgress?.(data.value * 100);
       } else if (data.type === 'done') {
+        signal?.removeEventListener("abort", onAbort);
         worker.terminate();
         resolve(data.hash);
       } else if (data.type === 'error') {
+        signal?.removeEventListener("abort", onAbort);
         worker.terminate();
         reject(new Error(data.message));
       }
     };
     worker.onerror = () => {
+      signal?.removeEventListener("abort", onAbort);
       worker.terminate();
       reject(new Error("Worker error processing file hash"));
     };
     worker.postMessage(file);
   });
+
+  // Check if cancelled between hashing and uploading
+  if (signal?.aborted) throw new Error("Upload cancelled");
 
   // 1b. Notify caller that hash is complete — lets the caller release the hash
   //     semaphore and acquire the TeleVault XHR semaphore before we start uploading.
@@ -239,6 +268,8 @@ export async function uploadFile(
     // Sequentially upload chunks; on failure HEAD to get server offset and resume.
     let offset = 0;
     while (offset < file.size) {
+      // Check abort signal before each chunk
+      if (signal?.aborted) throw new Error("Upload cancelled");
       let chunkSent = false;
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         if (attempt > 0) {
@@ -309,12 +340,13 @@ export async function uploadFile(
 
         const { status: patchStatus, newOffset } = patchResult;
 
-        if (patchStatus === 204) {
+        if (patchResult.status === 204) {
           offset = newOffset;
           chunkSent = true;
           onUploadProgress?.(Math.round((offset / file.size) * 100));
           break;
         }
+        if (signal?.aborted) throw new Error("Upload cancelled");
         if (!RETRYABLE_STATUSES.has(patchStatus) && patchStatus !== 409) {
           throw new Error(`TUS PATCH failed with ${patchStatus}`);
         }
@@ -345,7 +377,8 @@ export async function uploadFile(
         method: string; 
         headers?: Record<string, string>; 
         body?: any; 
-        onProgress?: (loaded: number, total: number) => void 
+        onProgress?: (loaded: number, total: number) => void;
+        signal?: AbortSignal;
       }
     ) => new Promise<{ status: number; body: string }>(async (resolve, reject) => {
       const initialToken = getToken();
@@ -365,11 +398,22 @@ export async function uploadFile(
         }
         xhr.onload = () => res({ status: xhr.status, body: xhr.responseText });
         xhr.onerror = () => rej(new Error("Network error"));
-        // 3 minutes per request — prevents indefinite hangs that deadlock tvSem
-        xhr.timeout = 180_000;
-        xhr.ontimeout = () => res({ status: 524, body: "" });
-        xhr.send(options.body);
-      });
+          // 3 minutes per request — prevents indefinite hangs that deadlock tvSem
+          xhr.timeout = 180_000;
+          xhr.ontimeout = () => res({ status: 524, body: "" });
+
+          if (options.signal) {
+            const onAbort = () => {
+              xhr.abort();
+              rej(new Error("Upload cancelled"));
+            };
+            if (options.signal.aborted) onAbort();
+            else options.signal.addEventListener("abort", onAbort, { once: true });
+            xhr.addEventListener("loadend", () => options.signal?.removeEventListener("abort", onAbort));
+          }
+
+          xhr.send(options.body);
+        });
 
       if (firstTry.status === 401) {
         const { refreshToken, setTokens, logout } = useAuthStore.getState();
@@ -399,10 +443,21 @@ export async function uploadFile(
               }
               secondXhr.onload = () => resolve({ status: secondXhr.status, body: secondXhr.responseText });
               secondXhr.onerror = () => reject(new Error("Network error"));
-              secondXhr.timeout = 180_000;
-              secondXhr.ontimeout = () => resolve({ status: 524, body: "" });
-              secondXhr.send(options.body);
-              return;
+                secondXhr.timeout = 180_000;
+                secondXhr.ontimeout = () => resolve({ status: 524, body: "" });
+
+                if (options.signal) {
+                  const onAbort2 = () => {
+                    secondXhr.abort();
+                    reject(new Error("Upload cancelled"));
+                  };
+                  if (options.signal.aborted) onAbort2();
+                  else options.signal.addEventListener("abort", onAbort2, { once: true });
+                  secondXhr.addEventListener("loadend", () => options.signal?.removeEventListener("abort", onAbort2));
+                }
+
+                secondXhr.send(options.body);
+                return;
             }
           } catch { /* login below */ }
         }
@@ -445,6 +500,7 @@ export async function uploadFile(
     let nextChunkIdx = 0;
     const worker = async () => {
       while (true) {
+        if (signal?.aborted) throw new Error("Upload cancelled");
         const i = nextChunkIdx++;
         if (i >= totalChunks) break;
 
@@ -469,9 +525,11 @@ export async function uploadFile(
               uploadedPerChunk[i] = loaded;
               reportProgress();
             },
+            signal,
           });
 
           if (chunkRes.status === 204) break;
+          if (signal?.aborted) throw new Error("Upload cancelled");
           if (!RETRYABLE_STATUSES.has(chunkRes.status)) {
             throw new Error(`Chunk ${i} upload failed: ${chunkRes.status}`);
           }

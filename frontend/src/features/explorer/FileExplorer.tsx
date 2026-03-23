@@ -248,7 +248,7 @@ export function FileExplorer() {
     (files: File[]) => {
       if (!user) return;
 
-      const { addUpload, updateProgress, setStatus, promoteUpload } =
+      const { addUpload, updateProgress, setStatus, promoteUpload, registerAbort } =
         useUploadStore.getState();
 
       // Add ALL files to the store immediately as "queued"
@@ -300,6 +300,9 @@ export function FileExplorer() {
             let hashReleased = false;
             let tvAcquired = false;
             let realOperationId: string | null = null;
+            
+            const abortController = new AbortController();
+            registerAbort(tempId, abortController);
 
             try {
               await uploadFile(
@@ -338,6 +341,7 @@ export function FileExplorer() {
                   await tvSem.acquire();
                   tvAcquired = true;
                 },
+                abortController.signal,
               );
             } catch (err) {
               if (!hashReleased) {

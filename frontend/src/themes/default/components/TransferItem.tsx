@@ -44,6 +44,16 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
     prevStatus.current = upload.status;
   }, [upload.status, upload.folderId, queryClient]);
 
+  // Auto-remove from tray after 30 seconds if cancelled
+  useEffect(() => {
+    if (status === "cancelled" && onRemove) {
+      const timer = setTimeout(() => {
+        onRemove(operationId);
+      }, 30000);
+      return () => clearTimeout(timer);
+    }
+  }, [status, operationId, onRemove]);
+
   const isTerminal =
     status === "complete" || status === "error" || status === "cancelled";
 
@@ -201,188 +211,196 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
     return null;
   })();
 
-  return (
-    <Tooltip content={tooltipContent} side="left" sideOffset={12} interactive={true}>
-      <motion.div
-        layout
-        initial={
-          shouldReduceMotion
-            ? { opacity: 1 }
-            : { opacity: 0, y: 8, scale: 0.98 }
-        }
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={
-          shouldReduceMotion
-            ? { opacity: 0 }
-            : { opacity: 0, scale: 0.97, y: -4 }
-        }
-        transition={shouldReduceMotion ? { duration: 0 } : { ...exitTransition }}
-        className={cn(
-          "relative flex flex-col gap-1.5 px-3 py-2.5 rounded-[var(--tv-radius-md)] overflow-hidden",
-          "border border-[var(--tv-border-subtle)]",
-          "bg-[var(--tv-bg-overlay)]",
-          "flex-shrink-0",
-        )}
-      >
-        {/* ── State layer ─────────────────────────────────────────────────── */}
-        <div
-          className="absolute inset-0 pointer-events-none rounded-[var(--tv-radius-md)]"
-          style={{
-            background:
-              status === "error"
-                ? "var(--tv-error-container)"
-                : status === "complete"
-                  ? "var(--tv-success-container)"
-                  : "transparent",
-            opacity: 0.5,
-          }}
-        />
+  const itemContent = (
+    <motion.div
+      layout
+      initial={
+        shouldReduceMotion
+          ? { opacity: 1 }
+          : { opacity: 0, y: 8, scale: 0.98 }
+      }
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={
+        shouldReduceMotion
+          ? { opacity: 0 }
+          : { opacity: 0, scale: 0.97, y: -4 }
+      }
+      transition={shouldReduceMotion ? { duration: 0 } : { ...exitTransition }}
+      className={cn(
+        "relative flex flex-col gap-1.5 px-3 py-2.5 rounded-[var(--tv-radius-md)] overflow-hidden",
+        "border border-[var(--tv-border-subtle)]",
+        "bg-[var(--tv-bg-overlay)]",
+        "flex-shrink-0",
+      )}
+    >
+      {/* ── State layer ─────────────────────────────────────────────────── */}
+      <div
+        className="absolute inset-0 pointer-events-none rounded-[var(--tv-radius-md)]"
+        style={{
+          background:
+            status === "error"
+              ? "var(--tv-error-container)"
+              : status === "complete"
+                ? "var(--tv-success-container)"
+                : "transparent",
+          opacity: 0.5,
+        }}
+      />
 
-        {/* ── Header row ──────────────────────────────────────────────────── */}
-        <div className="relative flex items-center gap-2 min-w-0">
-          {/* Leading icon */}
-          <div className="flex-shrink-0 text-[var(--tv-text-secondary)]">
-            {leadingIcon}
-          </div>
-
-          {/* Name + size + status */}
-          <div className="flex-1 min-w-0">
-            <p
-              className="truncate"
-              style={{
-                font: "var(--tv-type-body)",
-                color: "var(--tv-text-primary)",
-              }}
-            >
-              {fileName}
-            </p>
-            <p
-              style={{
-                font: "var(--tv-type-label-sm)",
-                color: "var(--tv-text-secondary)",
-                marginTop: 1,
-              }}
-            >
-              {formatBytes(fileSize)}
-              {statusLabel}
-            </p>
-          </div>
-
-          {/* Action button */}
-          <AnimatePresence mode="wait">
-            {!isTerminal && onCancel && (
-              <motion.button
-                key="cancel"
-                initial={shouldReduceMotion ? {} : { opacity: 0, scale: 0.7 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={shouldReduceMotion ? {} : { opacity: 0, scale: 0.7 }}
-                transition={
-                  shouldReduceMotion ? { duration: 0 } : { ...springSnappy }
-                }
-                onClick={() => onCancel(operationId)}
-                aria-label="Cancel upload"
-                className={cn(
-                  "flex items-center justify-center w-6 h-6 rounded-[var(--tv-radius-xs)]",
-                  "text-[var(--tv-text-secondary)] hover:text-[var(--tv-text-primary)]",
-                  "transition-colors duration-[var(--tv-duration-fast)]",
-                  "flex-shrink-0",
-                )}
-                style={{ position: "relative" }}
-              >
-                <Dismiss16Regular />
-              </motion.button>
-            )}
-            {isTerminal && onRemove && (
-              <motion.button
-                key="remove"
-                initial={shouldReduceMotion ? {} : { opacity: 0, scale: 0.7 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={shouldReduceMotion ? {} : { opacity: 0, scale: 0.7 }}
-                transition={
-                  shouldReduceMotion ? { duration: 0 } : { ...springSnappy }
-                }
-                onClick={() => onRemove(operationId)}
-                aria-label="Dismiss"
-                className={cn(
-                  "flex items-center justify-center w-6 h-6 rounded-[var(--tv-radius-xs)]",
-                  "text-[var(--tv-text-secondary)] hover:text-[var(--tv-text-primary)]",
-                  "transition-colors duration-[var(--tv-duration-fast)]",
-                  "flex-shrink-0",
-                )}
-              >
-                <Dismiss16Regular />
-              </motion.button>
-            )}
-          </AnimatePresence>
+      {/* ── Header row ──────────────────────────────────────────────────── */}
+      <div className="relative flex items-center gap-2 min-w-0">
+        {/* Leading icon */}
+        <div className="flex-shrink-0 text-[var(--tv-text-secondary)]">
+          {leadingIcon}
         </div>
 
-        {/* ── Progress bar ────────────────────────────────────────────────── */}
-        <AnimatePresence>
-          {(isActive || status === "queued" || status === "upload_queued") && (
-            <motion.div
-              key="progress-track"
-              initial={shouldReduceMotion ? {} : { opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={shouldReduceMotion ? {} : { opacity: 0 }}
-              transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
-              className="relative w-full h-1 rounded-full overflow-hidden"
-              style={{ background: "var(--tv-bg-subtle)" }}
-            >
-              <motion.div
-                className="absolute inset-y-0 left-0 rounded-full"
-                style={{
-                  background: (status === "queued" || status === "upload_queued") ? "var(--tv-text-disabled)" : "var(--tv-accent-primary)",
-                }}
-                animate={{ width: (status === "queued" || status === "upload_queued") ? "0%" : `${progress}%` }}
-                transition={progressTransition}
-              />
-            </motion.div>
-          )}
+        {/* Name + size + status */}
+        <div className="flex-1 min-w-0">
+          <p
+            className="truncate"
+            style={{
+              font: "var(--tv-type-body)",
+              color: "var(--tv-text-primary)",
+            }}
+          >
+            {fileName}
+          </p>
+          <p
+            style={{
+              font: "var(--tv-type-label-sm)",
+              color: "var(--tv-text-secondary)",
+              marginTop: 1,
+            }}
+          >
+            {formatBytes(fileSize)}
+            {statusLabel}
+          </p>
+        </div>
 
-          {/* Staged: full bar at 100% with a gentle pulse to indicate "ready, waiting" */}
-          {status === "staged" && (
-            <motion.div
-              key="progress-staged"
-              initial={shouldReduceMotion ? {} : { opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={shouldReduceMotion ? {} : { opacity: 0 }}
-              transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
-              className="relative w-full h-1 rounded-full overflow-hidden"
-              style={{ background: "var(--tv-bg-subtle)" }}
+        {/* Action button */}
+        <AnimatePresence mode="wait">
+          {!isTerminal && onCancel && (
+            <motion.button
+              key="cancel"
+              initial={shouldReduceMotion ? {} : { opacity: 0, scale: 0.7 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={shouldReduceMotion ? {} : { opacity: 0, scale: 0.7 }}
+              transition={
+                shouldReduceMotion ? { duration: 0 } : { ...springSnappy }
+              }
+              onClick={() => onCancel(operationId)}
+              aria-label="Cancel upload"
+              className={cn(
+                "flex items-center justify-center w-6 h-6 rounded-[var(--tv-radius-xs)]",
+                "text-[var(--tv-text-secondary)] hover:text-[var(--tv-text-primary)]",
+                "transition-colors duration-[var(--tv-duration-fast)]",
+                "flex-shrink-0",
+              )}
+              style={{ position: "relative" }}
             >
-              <motion.div
-                className="absolute inset-y-0 left-0 right-0 rounded-full"
-                style={{ background: "var(--tv-accent-subtle-border)" }}
-                animate={shouldReduceMotion ? {} : { opacity: [0.5, 1, 0.5] }}
-                transition={shouldReduceMotion ? { duration: 0 } : { duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-              />
-            </motion.div>
+              <Dismiss16Regular />
+            </motion.button>
           )}
-
-          {status === "complete" && (
-            <motion.div
-              key="progress-complete"
-              initial={shouldReduceMotion ? {} : { opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={shouldReduceMotion ? {} : { opacity: 0 }}
-              transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
-              className="w-full h-1 rounded-full"
-              style={{ background: "var(--tv-success)" }}
-            />
-          )}
-          {status === "error" && (
-            <motion.div
-              key="progress-error"
-              initial={shouldReduceMotion ? {} : { opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={shouldReduceMotion ? {} : { opacity: 0 }}
-              transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
-              className="w-full h-1 rounded-full"
-              style={{ background: "var(--tv-error)" }}
-            />
+          {isTerminal && onRemove && (
+            <motion.button
+              key="remove"
+              initial={shouldReduceMotion ? {} : { opacity: 0, scale: 0.7 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={shouldReduceMotion ? {} : { opacity: 0, scale: 0.7 }}
+              transition={
+                shouldReduceMotion ? { duration: 0 } : { ...springSnappy }
+              }
+              onClick={() => onRemove(operationId)}
+              aria-label="Dismiss"
+              className={cn(
+                "flex items-center justify-center w-6 h-6 rounded-[var(--tv-radius-xs)]",
+                "text-[var(--tv-text-secondary)] hover:text-[var(--tv-text-primary)]",
+                "transition-colors duration-[var(--tv-duration-fast)]",
+                "flex-shrink-0",
+              )}
+            >
+              <Dismiss16Regular />
+            </motion.button>
           )}
         </AnimatePresence>
-      </motion.div>
+      </div>
+
+      {/* ── Progress bar ────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {(isActive || status === "queued" || status === "upload_queued") && (
+          <motion.div
+            key="progress-track"
+            initial={shouldReduceMotion ? {} : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={shouldReduceMotion ? {} : { opacity: 0 }}
+            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
+            className="relative w-full h-1 rounded-full overflow-hidden"
+            style={{ background: "var(--tv-bg-subtle)" }}
+          >
+            <motion.div
+              className="absolute inset-y-0 left-0 rounded-full"
+              style={{
+                background: (status === "queued" || status === "upload_queued") ? "var(--tv-text-disabled)" : "var(--tv-accent-primary)",
+              }}
+              animate={{ width: (status === "queued" || status === "upload_queued") ? "0%" : `${progress}%` }}
+              transition={progressTransition}
+            />
+          </motion.div>
+        )}
+
+        {/* Staged: full bar at 100% with a gentle pulse to indicate "ready, waiting" */}
+        {status === "staged" && (
+          <motion.div
+            key="progress-staged"
+            initial={shouldReduceMotion ? {} : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={shouldReduceMotion ? {} : { opacity: 0 }}
+            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
+            className="relative w-full h-1 rounded-full overflow-hidden"
+            style={{ background: "var(--tv-bg-subtle)" }}
+          >
+            <motion.div
+              className="absolute inset-y-0 left-0 right-0 rounded-full"
+              style={{ background: "var(--tv-accent-subtle-border)" }}
+              animate={shouldReduceMotion ? {} : { opacity: [0.5, 1, 0.5] }}
+              transition={shouldReduceMotion ? { duration: 0 } : { duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+            />
+          </motion.div>
+        )}
+
+        {status === "complete" && (
+          <motion.div
+            key="progress-complete"
+            initial={shouldReduceMotion ? {} : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={shouldReduceMotion ? {} : { opacity: 0 }}
+            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
+            className="w-full h-1 rounded-full"
+            style={{ background: "var(--tv-success)" }}
+          />
+        )}
+        {status === "error" && (
+          <motion.div
+            key="progress-error"
+            initial={shouldReduceMotion ? {} : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={shouldReduceMotion ? {} : { opacity: 0 }}
+            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
+            className="w-full h-1 rounded-full"
+            style={{ background: "var(--tv-error)" }}
+          />
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+
+  if (status === "cancelled") {
+    return itemContent;
+  }
+
+  return (
+    <Tooltip content={tooltipContent} side="left" sideOffset={12} interactive={true}>
+      {itemContent}
     </Tooltip>
   );
 }

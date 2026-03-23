@@ -9,6 +9,8 @@ import { cn } from "../../../lib/cn";
 import { springStandard, springGentle, exitTransition } from "../../../lib/springs";
 import { useUploadStore, type UploadState } from "../../../store/uploadStore";
 import { TransferItem } from "./TransferItem";
+import { ConfirmModal } from "./ConfirmModal";
+import { cancelUpload, cancelAllUploads } from "../../../api/files";
 
 // ── TransfersTrayToggle ─────────────────────────────────────────────────────
 
@@ -107,10 +109,15 @@ export function TransfersTray({
     onOpenChange?.(next);
   };
 
-  // Store
   const storeUploads = useUploadStore((s) => s.uploads);
   const removeUpload = useUploadStore((s) => s.removeUpload);
   const setStatus = useUploadStore((s) => s.setStatus);
+  const abortUpload = useUploadStore((s) => s.abortUpload);
+  const abortAllUploads = useUploadStore((s) => s.abortAll);
+
+  // States for confirmation modals
+  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
+  const [cancelAllConfirm, setCancelAllConfirm] = useState(false);
 
   // Merge mock (preview) with real uploads
   const uploadsMap: Map<string, UploadState> = mockUploads
@@ -149,8 +156,45 @@ export function TransfersTray({
     }
   }, [hasUploads, isOpen, isControlled, onOpenChange]);
 
-  const handleCancel = (operationId: string) => {
-    setStatus(operationId, "cancelled");
+  const handleCancelClick = (operationId: string) => {
+    setCancelConfirmId(operationId);
+  };
+
+  const confirmCancel = async () => {
+    if (!cancelConfirmId) return;
+    const opId = cancelConfirmId;
+    setCancelConfirmId(null);
+
+    // Optimistically update UI
+    setStatus(opId, "cancelled");
+    
+    // Abort active XHR (TeleVault) phase if any
+    abortUpload(opId);
+    
+    // Call backend to cancel (Telegram) phase if any
+    cancelUpload(opId).catch((err) => {
+      console.error(`Failed to trigger backend cancel for ${opId}:`, err);
+    });
+  };
+
+  const confirmCancelAll = async () => {
+    setCancelAllConfirm(false);
+
+    // Filter to active uploads
+    const active = uploads.filter(
+      (u) => u.status !== "complete" && u.status !== "error" && u.status !== "cancelled"
+    );
+
+    // Optimistically cancel all active ones locally
+    active.forEach(u => setStatus(u.operationId, "cancelled"));
+
+    // Abort XHR uploads
+    abortAllUploads();
+
+    // Call backend
+    cancelAllUploads().catch((err) => {
+      console.error("Failed to cancel all uploads via backend:", err);
+    });
   };
 
   const handleRemove = (operationId: string) => {
@@ -218,6 +262,7 @@ export function TransfersTray({
       processing: 1,
       staged: 1,
       uploading: 1,
+      upload_queued: 1,
       hashing: 1,
       queued: 2,
       complete: 3,
@@ -231,7 +276,8 @@ export function TransfersTray({
       if (a.isDuplicate && !b.isDuplicate) return 1;
       if (!a.isDuplicate && b.isDuplicate) return -1;
     }
-    return 0;
+    // Stable tie-breaker for active items
+    return a.id.localeCompare(b.id);
   });
 
   return (
@@ -328,8 +374,29 @@ export function TransfersTray({
                 )}
               </span>
 
-              {/* Clear completed */}
               <AnimatePresence>
+                {remainingCount > 0 && (
+                  <motion.button
+                    key="cancel-all"
+                    initial={shouldReduceMotion ? {} : { opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={shouldReduceMotion ? {} : { opacity: 0, scale: 0.8 }}
+                    transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
+                    onClick={() => setCancelAllConfirm(true)}
+                    style={{
+                      font: "var(--tv-type-label-sm)",
+                      color: "var(--tv-error-strong)",
+                      padding: "2px 6px",
+                      borderRadius: "var(--tv-radius-xs)",
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                    }}
+                    className="hover:bg-[var(--tv-error-container)] transition-colors duration-[var(--tv-duration-fast)]"
+                  >
+                    Cancel {remainingCount}
+                  </motion.button>
+                )}
                 {terminalCount > 0 && (
                   <motion.button
                     key="clear"
@@ -380,7 +447,7 @@ export function TransfersTray({
                     <TransferItem
                       key={upload.id}
                       upload={upload}
-                      onCancel={handleCancel}
+                      onCancel={handleCancelClick}
                       onRemove={handleRemove}
                     />
                   ))
@@ -456,6 +523,28 @@ export function TransfersTray({
           />
         ) : null}
       </AnimatePresence>
+
+      <ConfirmModal
+        open={cancelConfirmId !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelConfirmId(null);
+        }}
+        title="Cancel transfer"
+        description="Are you sure you want to cancel this transfer? The file will not be uploaded."
+        confirmLabel="Cancel Transfer"
+        danger={true}
+        onConfirm={confirmCancel}
+      />
+
+      <ConfirmModal
+        open={cancelAllConfirm}
+        onOpenChange={setCancelAllConfirm}
+        title="Cancel all transfers"
+        description={`Are you sure you want to cancel all ${remainingCount} active transfers? They will not be uploaded.`}
+        confirmLabel="Cancel All Transfers"
+        danger={true}
+        onConfirm={confirmCancelAll}
+      />
     </div>
   );
 }

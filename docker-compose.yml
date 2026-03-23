@@ -16,6 +16,7 @@ services:
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
         VITE_THEME: ${VITE_THEME:-default}
+        VITE_ENABLE_PREVIEW: ${VITE_ENABLE_PREVIEW:-false}
     ports:
       - "${FRONTEND_PORT:-5173}:80"
     depends_on:

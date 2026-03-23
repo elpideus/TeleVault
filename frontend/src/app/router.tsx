@@ -81,7 +81,7 @@ export const router = createBrowserRouter([
       },
     ],
   },
-  ...(import.meta.env.DEV
+  ...(import.meta.env.DEV || import.meta.env.VITE_ENABLE_PREVIEW === "true"
     ? [
         {
           path: "/preview",

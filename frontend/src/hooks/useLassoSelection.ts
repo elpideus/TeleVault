@@ -66,6 +66,7 @@ export function useLassoSelection(
   function onMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("[data-item-id]")) return;
+
     dragStart.current = { x: e.clientX, y: e.clientY };
     additive.current = e.ctrlKey || e.metaKey;
     setRect(null);

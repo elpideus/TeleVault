@@ -22,8 +22,10 @@ COPY --from=wasm-builder /wasm-out ./public/wasm/
 # Pass build arguments (optional, defaults are used if not provided)
 ARG VITE_API_BASE_URL
 ARG VITE_THEME=default
+ARG VITE_ENABLE_PREVIEW=false
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_THEME=$VITE_THEME
+ENV VITE_ENABLE_PREVIEW=$VITE_ENABLE_PREVIEW
 
 RUN npm run build:frontend
 

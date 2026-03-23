@@ -650,6 +650,73 @@ async def tus_finalize(
     )
 
 
+
+# ── Upload cancellation endpoints ────────────────────────────────────────────
+
+@router.delete("/upload/{operation_id}", status_code=204)
+async def cancel_upload(
+    operation_id: str,
+    current_user: User = Depends(get_current_user),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
+):
+    """Cancel a single upload (queued, hashing, or uploading to Telegram).
+
+    The cancel flag is set immediately so the Telegram worker can spot it
+    between splits. Any partial Telegram messages are rolled back and the
+    pending File record is deleted by the worker (or by this handler if
+    the job was still queued and never started).
+    """
+    # Verify the operation exists and belongs to this user
+    owner_id = operation_registry._op_to_owner.get(operation_id)
+    if owner_id is None:
+        # Already finished or never existed — treat as a no-op success
+        return
+    if owner_id != current_user.telegram_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Set the cancel flag immediately so the worker sees it on the next check
+    operation_registry.cancel_operation(operation_id)
+
+    # Try to pull the job out of the queue before a worker picks it up
+    upload_worker_pool.cancel_job(current_user.telegram_id, operation_id)
+
+    # Cancel any pending TUS session too
+    for upload_id, entry in list(_tus_uploads.items()):
+        if entry.owner_id == current_user.telegram_id:
+            # We cannot know the operation_id before finalization, so we skip TUS
+            pass
+
+    # Broadcast the cancelled SSE event to all listeners for this operation
+    await operation_registry.emit_cancelled(operation_id, message="Cancelled by user")
+
+
+@router.delete("/upload", status_code=204)
+async def cancel_all_uploads(
+    current_user: User = Depends(get_current_user),
+    upload_worker_pool: UploadWorkerPool = Depends(get_upload_worker_pool),
+):
+    """Cancel ALL active, queued, and in-progress uploads for the current user."""
+    owner_id = current_user.telegram_id
+
+    # Collect all operation_ids owned by this user from the registry
+    owned_ops = [
+        op_id
+        for op_id, uid in list(operation_registry._op_to_owner.items())
+        if uid == owner_id
+    ]
+
+    # Mark all as cancelled immediately
+    for op_id in owned_ops:
+        operation_registry.cancel_operation(op_id)
+
+    # Drain the queue of any jobs not yet picked up by a worker
+    upload_worker_pool.cancel_all_jobs(owner_id)
+
+    # Broadcast cancelled SSE to all
+    for op_id in owned_ops:
+        await operation_registry.emit_cancelled(op_id, message="Cancelled by user")
+
+
 # ── Dynamic /{file_id} routes AFTER all fixed-path routes ───────────────────
 
 @router.patch("/{file_id}", response_model=FileOut)

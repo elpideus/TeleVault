@@ -253,6 +253,19 @@ async def execute_upload(
     # is always the sum across all splits, not the last split to report.
     _split_bytes_sent: list[int] = [0] * num_splits
 
+    # ── Cancelled before we even start? ──────────────────────────────────────
+    if registry.is_cancelled(operation_id):
+        async with AsyncSessionLocal() as session:
+            record = await session.get(File, file_id)
+            if record is not None:
+                await session.delete(record)
+                await session.commit()
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return
+
     async def _upload_split(split_index: int) -> UploadedSplitResult:
         account_id, client = client_snapshot[(account_offset + split_index) % len(client_snapshot)]
         offset = split_index * _SPLIT_SIZE
@@ -278,6 +291,9 @@ async def execute_upload(
 
         reader = _SplitReader(tmp_path, offset, split_size, split_name)
         try:
+            # Cancelled while waiting to start this split?
+            if registry.is_cancelled(operation_id):
+                raise asyncio.CancelledError
             result = await asyncio.wait_for(
                 upload_document(
                     client,
@@ -314,12 +330,24 @@ async def execute_upload(
         errors = [r for r in results if isinstance(r, BaseException)]
 
         if errors:
-            # ── 3b. Failure: rollback Telegram messages, mark file failed ─────
+            # ── 3b. Failure: rollback Telegram messages ──────────────────
             rollback_list = [
                 (r.client, r.channel_telegram_id, r.uploaded.message_id)
                 for r in successes
             ]
             await rollback_splits(rollback_list)
+
+            # If this was a user cancellation, clean up the pending DB record
+            # and return silently — the cancel endpoint already emitted the
+            # cancelled SSE event.
+            if registry.is_cancelled(operation_id):
+                async with AsyncSessionLocal() as session:
+                    record = await session.get(File, file_id)
+                    if record is not None:
+                        await session.delete(record)
+                        await session.commit()
+                return
+
             await registry.emit_error(operation_id, "Upload failed", message="Upload to Telegram failed")
             logger.error("execute_upload failed for operation %s: %s", operation_id, errors[0])
             async with AsyncSessionLocal() as session:

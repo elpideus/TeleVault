@@ -8,7 +8,7 @@ import { toast } from "../lib/toast";
 interface ProgressEvent {
   operation_id: string;
   pct: number;
-  status?: "done" | "complete" | "error" | "progress" | "ping";
+  status?: "done" | "complete" | "error" | "progress" | "ping" | "cancelled";
   message?: string;
 }
 
@@ -58,6 +58,9 @@ export function useGlobalProgress(token: string | null) {
           } else if (data.status === "error") {
             setStatus(opId, "error", data.message ?? "Upload failed");
             toast.error(`Failed to upload ${current.fileName}: ${data.message ?? "Unknown error"}`);
+            retryDelay = 1000;
+          } else if (data.status === "cancelled") {
+            setStatus(opId, "cancelled");
             retryDelay = 1000;
           }
         } catch {

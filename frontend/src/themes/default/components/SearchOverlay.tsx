@@ -418,7 +418,10 @@ export function SearchOverlay({ open: controlledOpen, onOpenChange, mockResults 
                   shouldReduceMotion ? { duration: 0 } : { duration: 0.18, ease: "easeOut" }
                 }
                 className="fixed inset-0 z-50"
-                style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}
+                style={{
+                  background: "var(--tv-overlay-bg)",
+                  backdropFilter: "blur(var(--tv-overlay-blur))",
+                }}
               />
             </Dialog.Overlay>
           )}

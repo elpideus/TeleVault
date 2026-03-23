@@ -65,6 +65,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
           display: "flex",
           overflow: "hidden",
           borderRadius: "var(--tv-radius-lg)",
+          position: "relative",
         }}
       >
         {/* ── Left nav ──────────────────────────────────────────────── */}
@@ -129,15 +130,6 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             })}
           </div>
 
-          {/* Close button */}
-          <div style={{ flexShrink: 0, paddingTop: 8 }}>
-            <IconButton
-              icon={<Dismiss20Regular />}
-              label="Close settings"
-              size="sm"
-              onClick={() => onOpenChange(false)}
-            />
-          </div>
         </nav>
 
         {/* ── Right panel slot ─────────────────────────────────────── */}
@@ -167,6 +159,16 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               {activePanel === "about"      && <AboutPanel />}
             </motion.div>
           </AnimatePresence>
+        </div>
+
+        {/* Global close button (top right) */}
+        <div style={{ position: "absolute", top: 16, right: 16, zIndex: 50 }}>
+          <IconButton
+            icon={<Dismiss20Regular />}
+            label="Close settings"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+          />
         </div>
       </div>
     </DialogContent>

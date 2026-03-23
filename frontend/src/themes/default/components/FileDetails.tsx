@@ -174,7 +174,7 @@ export function FileDetails({
         className={cn(
           "sticky top-0 z-10 flex items-center gap-4 px-4 h-9",
           "border-b border-[var(--tv-border-subtle)]",
-          "bg-[var(--tv-bg-overlay)]",
+          "bg-[var(--tv-bg-overlay)] select-none",
         )}
       >
         {/* Select All Checkbox */}
@@ -285,6 +285,13 @@ export function FileDetails({
         role="listbox"
         aria-multiselectable="true"
         aria-label="Files and folders"
+        className="pb-32 select-none"
+        onMouseDown={(e) => {
+          // Allow lasso to start if clicking exactly on the container background
+          if (e.target === e.currentTarget) {
+            // Lasso will start via FileExplorer's onMouseDown
+          }
+        }}
       >
         {isLoading ? (
           Array.from({ length: SKELETON_COUNT }).map((_, i) => (
@@ -293,43 +300,45 @@ export function FileDetails({
         ) : (
           <AnimatePresence>
             {folders.map((folder) => (
-              <FolderRow
-                key={folder.id}
-                folder={folder}
-                isSelected={selectedIds.has(folder.id)}
-                dragPayload={{ fileIds: [], folderSlugs: [folder.slug], itemCount: 1, label: folder.name }}
-                showColumns
-                visibleColumns={visibleColumns}
-                onSelect={onSelect}
-                onOpen={onOpenFolder}
-                onNewFolder={onFolderNew}
-                onRename={onFolderRename}
-                onMove={onFolderMove}
-                onDelete={onFolderDelete}
-                onProperties={onFolderProperties}
-                onCopy={onFolderCopy}
-                onPaste={onFolderPaste}
-                onColorChange={onFolderColorChange}
-              />
+              <div key={folder.id} data-item-id={folder.id}>
+                <FolderRow
+                  folder={folder}
+                  isSelected={selectedIds.has(folder.id)}
+                  dragPayload={{ fileIds: [], folderSlugs: [folder.slug], itemCount: 1, label: folder.name }}
+                  showColumns
+                  visibleColumns={visibleColumns}
+                  onSelect={onSelect}
+                  onOpen={onOpenFolder}
+                  onNewFolder={onFolderNew}
+                  onRename={onFolderRename}
+                  onMove={onFolderMove}
+                  onDelete={onFolderDelete}
+                  onProperties={onFolderProperties}
+                  onCopy={onFolderCopy}
+                  onPaste={onFolderPaste}
+                  onColorChange={onFolderColorChange}
+                />
+              </div>
             ))}
             {files.map((file) => (
-              <FileRow
-                key={file.id}
-                file={file}
-                isSelected={selectedIds.has(file.id)}
-                dragPayload={{ fileIds: [file.id], folderSlugs: [], itemCount: 1, label: file.name ?? file.original_name, mimeType: file.mime_type }}
-                showColumns
-                visibleColumns={visibleColumns}
-                onSelect={onSelect}
-                onOpen={onOpenFile}
-                onDownload={onFileDownload}
-                onRename={onFileRename}
-                onMove={onFileMove}
-                onDelete={onFileDelete}
-                onProperties={onFileProperties}
-                onCopy={onFileCopy}
-                onPaste={onFilePaste}
-              />
+              <div key={file.id} data-item-id={file.id}>
+                <FileRow
+                  file={file}
+                  isSelected={selectedIds.has(file.id)}
+                  dragPayload={{ fileIds: [file.id], folderSlugs: [], itemCount: 1, label: file.name ?? file.original_name, mimeType: file.mime_type }}
+                  showColumns
+                  visibleColumns={visibleColumns}
+                  onSelect={onSelect}
+                  onOpen={onOpenFile}
+                  onDownload={onFileDownload}
+                  onRename={onFileRename}
+                  onMove={onFileMove}
+                  onDelete={onFileDelete}
+                  onProperties={onFileProperties}
+                  onCopy={onFileCopy}
+                  onPaste={onFilePaste}
+                />
+              </div>
             ))}
           </AnimatePresence>
         )}

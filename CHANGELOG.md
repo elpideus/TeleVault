@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-03-23
+
+### Added
+
+- **Backend**: Upload cancellation API — `DELETE /files/upload/{operation_id}` cancels a single in-progress or queued upload, and `DELETE /files/upload` cancels all uploads for the current user. The cancel flag is set immediately so Telegram workers abort between splits and roll back any partial messages.
+- **Backend**: `UploadWorkerPool.cancel_job()` and `cancel_all_jobs()` — drain queued jobs from a user's worker queue before a worker picks them up, complementing the registry cancel flag for already-started jobs.
+- **Backend**: `OperationRegistry.emit_cancelled()` — broadcasts a `cancelled` SSE event to all listeners for a given operation, enabling real-time UI updates.
+- **Frontend**: Cancel button in the Transfers tray for individual uploads and a "Cancel all" action, wired to the new cancellation API endpoints.
+
+### Improvements
+
+- **Frontend**: The `/preview` design system page can now be enabled in production builds via the `VITE_ENABLE_PREVIEW=true` environment variable, instead of being restricted to dev mode only.
+- **Frontend**: `PreviewPage` now uses a horizontal masonry-style layout (inspired by ShadCN's component preview) — fixed-width `SectionContainer` cards wrap into a horizontally-scrollable canvas. Vertical mouse wheel is redirected to horizontal page scroll, with smart fallback so inner scrollable elements (card bodies, `.scrollable-horizontal` zones) still consume their own scroll events first.
+- **Frontend**: `PreviewPage` restructured with a new `SectionContainer` component that gives each section a fixed-width scrollable card, removing sticky section headers and the unused `Placeholder` component.
+- **Frontend**: Transfers tray and `TransferItem` components refactored for clearer state handling and improved layout consistency.
+- **Frontend**: Global progress hook updated to handle cancelled state.
+- **Backend**: Progress service improvements for more accurate multi-split tracking.
+
+---
+
 ## [1.3.4] - 2026-03-23
 
 ### Fixed
