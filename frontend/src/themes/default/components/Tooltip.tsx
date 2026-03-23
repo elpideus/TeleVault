@@ -14,6 +14,8 @@ export interface TooltipProps {
   delayDuration?: number;
   /** Disable the tooltip */
   disabled?: boolean;
+  /** Allow interaction with tooltip content */
+  interactive?: boolean;
 }
 
 // ── Tooltip ───────────────────────────────────────────────────────────────────
@@ -29,6 +31,7 @@ export function Tooltip({
   sideOffset = 6,
   delayDuration,
   disabled = false,
+  interactive = false,
 }: TooltipProps) {
   if (disabled) {
     // Render children without tooltip wrapper
@@ -45,13 +48,14 @@ export function Tooltip({
           sideOffset={sideOffset}
           className={cn(
             // Layout & surface
-            "z-50 max-w-xs px-2.5 py-1.5",
-            "rounded-[var(--tv-radius-sm)]",
-            "bg-[var(--tv-bg-highest)]",
-            "border border-[var(--tv-border-default)]",
+            "z-50 max-w-xs px-3 py-2",
+            "rounded-[var(--tv-radius-md)]",
+            "border border-[var(--tv-border-strong)]",
             "text-[var(--tv-text-primary)]",
-            "shadow-[var(--tv-shadow-sm)]",
-            "select-none pointer-events-none",
+            "shadow-[var(--tv-shadow-md)]",
+            "select-none",
+            !interactive && "pointer-events-none",
+            "overflow-hidden",
             // Transform origin — animates from Radix computed position
             "origin-[--radix-tooltip-content-transform-origin]",
             // Open animation (CSS keyframes defined in index.css)
@@ -60,13 +64,17 @@ export function Tooltip({
             // Close animation
             "data-[state=closed]:animate-[tv-tooltip-out_100ms_ease-in]",
           )}
-          style={{ font: "var(--tv-type-body-sm)" }}
+          style={{
+            font: "var(--tv-type-body-sm)",
+            backdropFilter: "blur(var(--tv-glass-blur))",
+            background: "var(--tv-bg-glass)",
+          }}
         >
           {content}
           <TooltipPrimitive.Arrow
-            className="fill-[var(--tv-bg-highest)]"
-            width={8}
-            height={4}
+            className="fill-[var(--tv-border-strong)]"
+            width={10}
+            height={5}
           />
         </TooltipPrimitive.Content>
       </TooltipPrimitive.Portal>

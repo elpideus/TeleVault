@@ -166,24 +166,18 @@ export function TransfersTray({
 
   // ── Resizing ──────────────────────────────────────────────────────────────
 
-  const [height, setHeight] = useState<number | undefined>(undefined);
+  const [height, setHeight] = useState<number>(() => Math.round(window.innerHeight * 0.4));
   const [isResizing, setIsResizing] = useState(false);
   const trayRef = useRef<HTMLDivElement>(null);
   const startY = useRef(0);
   const startHeight = useRef(0);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Use offsetHeight (layout height, unaffected by CSS transforms) so that
-    // grabbing the handle during the entrance animation doesn't produce a
-    // wrong baseline. Falls back to 300 if the element isn't painted yet.
+    // Use offsetHeight as the baseline when it's larger than the stored
+    // height (e.g. during the entrance animation before the first resize).
     const el = trayRef.current;
-    const currentLayoutHeight = el?.offsetHeight ?? 0;
-    const resolvedHeight =
-      height ?? (currentLayoutHeight > 140 ? currentLayoutHeight : 300);
+    const resolvedHeight = Math.max(height, el?.offsetHeight ?? 0, 140);
 
-    // Pre-snap from "auto" to a pixel value so Framer Motion never has to
-    // animate "auto" → px. Without this the tray could shrink to a line on
-    // the very first drag after an auto-open.
     setHeight(resolvedHeight);
     setIsResizing(true);
     startY.current = e.clientY;
@@ -261,8 +255,7 @@ export function TransfersTray({
               y: 0,
               opacity: 1,
               scale: 1,
-              height: isOpen ? (height ?? "auto") : 0,
-              maxHeight: height ? undefined : "40vh",
+              height: isOpen ? height : 0,
               minHeight: isOpen ? 140 : 0,
             }}
             exit={

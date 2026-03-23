@@ -267,6 +267,7 @@ export function FileExplorer() {
           progress: 0,
           status: "queued",
           folderId: slug || undefined,
+          location: segments.map((s) => s.label).join(" / "),
         });
       }
 

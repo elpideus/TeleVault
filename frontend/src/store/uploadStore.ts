@@ -13,6 +13,7 @@ export interface UploadState {
   error?: string;
   folderId?: string;
   isDuplicate?: boolean;
+  location?: string;
   speed?: number; // bytes per second
   lastUpdate?: number; // timestamp
 }
@@ -49,6 +50,7 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
             operationId: realId, 
             fileId,
             lastUpdate: Date.now(), // Reset timing on promotion
+            location: existing.location,
           });
         } else {
           next.set(key, value);

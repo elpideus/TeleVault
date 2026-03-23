@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.3] - 2026-03-23
+
+### Added
+
+- **Frontend**: Added expandable "Location" (breadcrumb path) to transfer items in the Transfers tray for better context on where files are being uploaded.
+- **Frontend**: Enhanced tooltips with glassmorphism effects (blur + semi-transparent background) and interactive content support.
+- **Frontend**: Added `.tabular-nums` CSS utility to prevent layout jitter in upload speed and progress readouts.
+
+### Fixed
+
+- **Backend**: Resolved fluctuating progress bar during multi-split uploads (e.g. 700 MB+ files) by tracking split progress independently instead of overwriting the aggregated total.
+- **Frontend**: Fixed `formatBytes` utility to display integer byte values correctly (e.g. "123 B" instead of "123.0 B").
+- **Frontend**: Improved `TransfersTray` resizing reliability and fixed layout jumps during entrance animations by properly initializing and calculating height baselines.
+
+---
+
 ## [1.3.2] - 2026-03-22
 
 ### Fixed
@@ -154,6 +170,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## [1.0.8] - 2026-03-21
+
+### Fixed
+
 - Frontend 401 Duplicate Check: refactored the `check-hash` duplicate check to use the standard `apiClient`, inheriting automatic token refresh logic if the session expires during a long upload queue.
 
 ---
@@ -256,5 +275,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VITE_THEME` build argument for UI theme selection
 - `ADMIN_TELEGRAM_ID` environment variable for automatic admin promotion on first login
 
+[1.3.3]: https://github.com/elpideus/TeleVault/compare/v1.3.2...v1.3.3
+[1.3.2]: https://github.com/elpideus/TeleVault/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/elpideus/TeleVault/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/elpideus/TeleVault/compare/v1.2.3...v1.3.0

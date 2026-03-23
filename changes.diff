@@ -1,0 +1,346 @@
+diff --git a/backend/app/services/upload.py b/backend/app/services/upload.py
+index 1622493..a92a181 100644
+--- a/backend/app/services/upload.py
++++ b/backend/app/services/upload.py
+@@ -249,6 +249,10 @@ async def execute_upload(
+             logger.info("Telegram client disconnected — reconnecting before upload %s", operation_id)
+             await c.connect()
+ 
++    # Track bytes sent per split independently so the aggregated progress
++    # is always the sum across all splits, not the last split to report.
++    _split_bytes_sent: list[int] = [0] * num_splits
++
+     async def _upload_split(split_index: int) -> UploadedSplitResult:
+         account_id, client = client_snapshot[(account_offset + split_index) % len(client_snapshot)]
+         offset = split_index * _SPLIT_SIZE
+@@ -256,9 +260,11 @@ async def execute_upload(
+         split_name = f"{filename}.part{split_index}" if multi else filename
+ 
+         async def _on_progress(sent: int, _total: int) -> None:
++            _split_bytes_sent[split_index] = sent
++            total_sent = sum(_split_bytes_sent)
+             await registry.emit_progress(
+                 operation_id,
+-                offset + sent,
++                total_sent,
+                 total_size,
+                 message=f"Uploading to Telegram… part {split_index + 1} of {num_splits}",
+             )
+diff --git a/frontend/src/features/explorer/FileExplorer.tsx b/frontend/src/features/explorer/FileExplorer.tsx
+index 6f19f30..657181c 100644
+--- a/frontend/src/features/explorer/FileExplorer.tsx
++++ b/frontend/src/features/explorer/FileExplorer.tsx
+@@ -267,6 +267,7 @@ export function FileExplorer() {
+           progress: 0,
+           status: "queued",
+           folderId: slug || undefined,
++          location: segments.map((s) => s.label).join(" / "),
+         });
+       }
+ 
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index 10a877a..362fe6a 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -42,6 +42,10 @@ body {
+   text-rendering: optimizeLegibility;
+ }
+ 
++.tabular-nums {
++  font-variant-numeric: tabular-nums;
++}
++
+ #root {
+   display: flex;
+   flex-direction: column;
+diff --git a/frontend/src/lib/formatBytes.ts b/frontend/src/lib/formatBytes.ts
+index 7326662..7dd6b4d 100644
+--- a/frontend/src/lib/formatBytes.ts
++++ b/frontend/src/lib/formatBytes.ts
+@@ -6,6 +6,10 @@ export function formatBytes(bytes: number, decimals = 1): string {
+   const k = 1024;
+   const sizes = ["B", "KB", "MB", "GB", "TB"];
+   const i = Math.floor(Math.log(bytes) / Math.log(k));
+-  const value = parseFloat((bytes / Math.pow(k, i)).toFixed(decimals));
+-  return `${value} ${sizes[i]}`;
++  const value = bytes / Math.pow(k, i);
++  
++  // No decimals for bytes
++  if (i === 0) return `${Math.floor(value)} B`;
++  
++  return `${value.toFixed(decimals)} ${sizes[i]}`;
+ }
+diff --git a/frontend/src/store/uploadStore.ts b/frontend/src/store/uploadStore.ts
+index b784cbf..6ed1411 100644
+--- a/frontend/src/store/uploadStore.ts
++++ b/frontend/src/store/uploadStore.ts
+@@ -13,6 +13,7 @@ export interface UploadState {
+   error?: string;
+   folderId?: string;
+   isDuplicate?: boolean;
++  location?: string;
+   speed?: number; // bytes per second
+   lastUpdate?: number; // timestamp
+ }
+@@ -49,6 +50,7 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
+             operationId: realId, 
+             fileId,
+             lastUpdate: Date.now(), // Reset timing on promotion
++            location: existing.location,
+           });
+         } else {
+           next.set(key, value);
+diff --git a/frontend/src/themes/default/components/Tooltip.tsx b/frontend/src/themes/default/components/Tooltip.tsx
+index c7dd161..e66dc72 100644
+--- a/frontend/src/themes/default/components/Tooltip.tsx
++++ b/frontend/src/themes/default/components/Tooltip.tsx
+@@ -14,6 +14,8 @@ export interface TooltipProps {
+   delayDuration?: number;
+   /** Disable the tooltip */
+   disabled?: boolean;
++  /** Allow interaction with tooltip content */
++  interactive?: boolean;
+ }
+ 
+ // ── Tooltip ───────────────────────────────────────────────────────────────────
+@@ -29,6 +31,7 @@ export function Tooltip({
+   sideOffset = 6,
+   delayDuration,
+   disabled = false,
++  interactive = false,
+ }: TooltipProps) {
+   if (disabled) {
+     // Render children without tooltip wrapper
+@@ -45,13 +48,14 @@ export function Tooltip({
+           sideOffset={sideOffset}
+           className={cn(
+             // Layout & surface
+-            "z-50 max-w-xs px-2.5 py-1.5",
+-            "rounded-[var(--tv-radius-sm)]",
+-            "bg-[var(--tv-bg-highest)]",
+-            "border border-[var(--tv-border-default)]",
++            "z-50 max-w-xs px-3 py-2",
++            "rounded-[var(--tv-radius-md)]",
++            "border border-[var(--tv-border-strong)]",
+             "text-[var(--tv-text-primary)]",
+-            "shadow-[var(--tv-shadow-sm)]",
+-            "select-none pointer-events-none",
++            "shadow-[var(--tv-shadow-md)]",
++            "select-none",
++            !interactive && "pointer-events-none",
++            "overflow-hidden",
+             // Transform origin — animates from Radix computed position
+             "origin-[--radix-tooltip-content-transform-origin]",
+             // Open animation (CSS keyframes defined in index.css)
+@@ -60,13 +64,17 @@ export function Tooltip({
+             // Close animation
+             "data-[state=closed]:animate-[tv-tooltip-out_100ms_ease-in]",
+           )}
+-          style={{ font: "var(--tv-type-body-sm)" }}
++          style={{
++            font: "var(--tv-type-body-sm)",
++            backdropFilter: "blur(var(--tv-glass-blur))",
++            background: "var(--tv-bg-glass)",
++          }}
+         >
+           {content}
+           <TooltipPrimitive.Arrow
+-            className="fill-[var(--tv-bg-highest)]"
+-            width={8}
+-            height={4}
++            className="fill-[var(--tv-border-strong)]"
++            width={10}
++            height={5}
+           />
+         </TooltipPrimitive.Content>
+       </TooltipPrimitive.Portal>
+diff --git a/frontend/src/themes/default/components/TransferItem.tsx b/frontend/src/themes/default/components/TransferItem.tsx
+index 2e3890a..5a0f20a 100644
+--- a/frontend/src/themes/default/components/TransferItem.tsx
++++ b/frontend/src/themes/default/components/TransferItem.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useRef } from "react";
++import { useEffect, useRef, useState } from "react";
+ import { motion, useReducedMotion, AnimatePresence } from "framer-motion";
+ import {
+   Dismiss16Regular,
+@@ -7,6 +7,9 @@ import {
+   DismissCircle20Filled,
+   ArrowUpload20Regular,
+   Clock20Regular,
++  Home16Regular,
++  ChevronRight12Regular,
++  ChevronDown12Regular,
+ } from "@fluentui/react-icons";
+ import { useQueryClient } from "@tanstack/react-query";
+ import { cn } from "../../../lib/cn";
+@@ -25,6 +28,7 @@ import { Tooltip } from "./Tooltip";
+ 
+ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) {
+   const shouldReduceMotion = useReducedMotion();
++  const [isLocationExpanded, setIsLocationExpanded] = useState(false);
+   const { operationId, fileName, fileSize, progress, status, error, speed } = upload;
+ 
+   const queryClient = useQueryClient();
+@@ -67,33 +71,95 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps)
+     }
+     return `${Math.floor(seconds)}s`;
+   };
++  const truncateMiddle = (str: string, maxLen: number) => {
++    if (str.length <= maxLen) return str;
++    const side = Math.floor((maxLen - 3) / 2);
++    return str.slice(0, side) + "..." + str.slice(str.length - side);
++  };
+ 
+   const tooltipContent = (
+-    <div className="flex flex-col gap-1">
+-      <div className="font-semibold truncate max-w-[200px]">{fileName}</div>
+-      <div className="flex flex-col text-[var(--tv-text-secondary)]">
++    <div className="flex flex-col gap-2 w-[280px]">
++      <div className="flex flex-col gap-0.5">
++        <div className="font-semibold truncate w-full text-[var(--tv-text-primary)]">
++          {fileName}
++        </div>
++        <div className="text-[11px] text-[var(--tv-text-secondary)]">
++          {formatBytes(fileSize)} • <span className="capitalize">{status.replace("_", " ")}</span>
++        </div>
++      </div>
++
++      <div className="h-px bg-[var(--tv-border-subtle)] -mx-1" />
++
++      <div className="flex flex-col gap-1.5 py-0.5 tabular-nums">
++        {upload.location && (
++          <div className="flex flex-col gap-0.5 text-[10px] pb-1">
++            <button 
++              onClick={(e) => {
++                e.stopPropagation();
++                setIsLocationExpanded(!isLocationExpanded);
++              }}
++              className="flex items-center gap-1 cursor-pointer bg-transparent border-none p-0 outline-none w-fit group"
++            >
++              {isLocationExpanded ? (
++                <ChevronDown12Regular className="text-[var(--tv-text-secondary)] opacity-50 group-hover:opacity-100" />
++              ) : (
++                <ChevronRight12Regular className="text-[var(--tv-text-secondary)] opacity-50 group-hover:opacity-100" />
++              )}
++              <span className="text-[var(--tv-text-secondary)] uppercase tracking-wider font-semibold text-[9px] group-hover:text-[var(--tv-text-primary)] transition-colors">Location</span>
++            </button>
++            
++            <AnimatePresence>
++              {isLocationExpanded && (
++                <motion.div 
++                  initial={{ height: 0, opacity: 0 }}
++                  animate={{ height: "auto", opacity: 1 }}
++                  exit={{ height: 0, opacity: 0 }}
++                  transition={{ ...springSnappy }}
++                  className="overflow-hidden"
++                >
++                  <div className="text-[var(--tv-text-primary)] leading-relaxed max-w-[280px] flex items-center gap-x-1 gap-y-0.5 flex-wrap pt-1.5 border-l border-[var(--tv-border-subtle)] ml-1.5 pl-2.5 my-0.5">
++                    {upload.location.split(" / ").map((part, i, arr) => (
++                      <span key={i} className="flex items-center gap-1">
++                        {i > 0 && <span className="text-[var(--tv-text-tertiary)] opacity-30 select-none">/</span>}
++                        {part === "My Vault" ? (
++                          <Home16Regular className="text-[var(--tv-accent-primary)] shrink-0" />
++                        ) : (
++                          <span 
++                            className={cn(
++                              "break-all",
++                              i < arr.length - 1 ? "text-[var(--tv-text-secondary)]" : "text-[var(--tv-text-primary)] font-medium"
++                            )}
++                            title={part}
++                          >
++                            {truncateMiddle(part || "", 24)}
++                          </span>
++                        )}
++                      </span>
++                    ))}
++                  </div>
++                </motion.div>
++              )}
++            </AnimatePresence>
++          </div>
++        )}
+         {speed && speed > 0 && (
+-          <div className="flex justify-between gap-4">
+-            <span>Speed</span>
+-            <span className="text-[var(--tv-text-primary)]">{formatBytes(speed)}/s</span>
++          <div className="flex items-center justify-between text-[11px]">
++            <span className="text-[var(--tv-text-secondary)]">Speed</span>
++            <span className="font-medium text-[var(--tv-accent-primary)]">{formatBytes(speed)}/s</span>
+           </div>
+         )}
+         {!isTerminal && progress < 100 && (
+-          <div className="flex justify-between gap-4">
+-            <span>Remaining</span>
++          <div className="flex items-center justify-between text-[11px]">
++            <span className="text-[var(--tv-text-secondary)]">Remaining</span>
+             <span className="text-[var(--tv-text-primary)]">{formatBytes(remainingBytes)}</span>
+           </div>
+         )}
+         {etaSeconds !== null && etaSeconds > 0 && !isTerminal && (
+-          <div className="flex justify-between gap-4">
+-            <span>ETA</span>
++          <div className="flex items-center justify-between text-[11px]">
++            <span className="text-[var(--tv-text-secondary)]">ETA</span>
+             <span className="text-[var(--tv-text-primary)]">{formatETA(etaSeconds)}</span>
+           </div>
+         )}
+-        <div className="flex justify-between gap-4">
+-          <span>Status</span>
+-          <span className="text-[var(--tv-text-primary)] capitalize">{status.replace("_", " ")}</span>
+-        </div>
+       </div>
+     </div>
+   );
+@@ -136,7 +202,7 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps)
+   })();
+ 
+   return (
+-    <Tooltip content={tooltipContent} side="left" sideOffset={12}>
++    <Tooltip content={tooltipContent} side="left" sideOffset={12} interactive={true}>
+       <motion.div
+         layout
+         initial={
+diff --git a/frontend/src/themes/default/components/TransfersTray.tsx b/frontend/src/themes/default/components/TransfersTray.tsx
+index 5c69524..b44c643 100644
+--- a/frontend/src/themes/default/components/TransfersTray.tsx
++++ b/frontend/src/themes/default/components/TransfersTray.tsx
+@@ -166,24 +166,18 @@ export function TransfersTray({
+ 
+   // ── Resizing ──────────────────────────────────────────────────────────────
+ 
+-  const [height, setHeight] = useState<number | undefined>(undefined);
++  const [height, setHeight] = useState<number>(() => Math.round(window.innerHeight * 0.4));
+   const [isResizing, setIsResizing] = useState(false);
+   const trayRef = useRef<HTMLDivElement>(null);
+   const startY = useRef(0);
+   const startHeight = useRef(0);
+ 
+   const handleMouseDown = (e: React.MouseEvent) => {
+-    // Use offsetHeight (layout height, unaffected by CSS transforms) so that
+-    // grabbing the handle during the entrance animation doesn't produce a
+-    // wrong baseline. Falls back to 300 if the element isn't painted yet.
++    // Use offsetHeight as the baseline when it's larger than the stored
++    // height (e.g. during the entrance animation before the first resize).
+     const el = trayRef.current;
+-    const currentLayoutHeight = el?.offsetHeight ?? 0;
+-    const resolvedHeight =
+-      height ?? (currentLayoutHeight > 140 ? currentLayoutHeight : 300);
++    const resolvedHeight = Math.max(height, el?.offsetHeight ?? 0, 140);
+ 
+-    // Pre-snap from "auto" to a pixel value so Framer Motion never has to
+-    // animate "auto" → px. Without this the tray could shrink to a line on
+-    // the very first drag after an auto-open.
+     setHeight(resolvedHeight);
+     setIsResizing(true);
+     startY.current = e.clientY;
+@@ -261,8 +255,7 @@ export function TransfersTray({
+               y: 0,
+               opacity: 1,
+               scale: 1,
+-              height: isOpen ? (height ?? "auto") : 0,
+-              maxHeight: height ? undefined : "40vh",
++              height: isOpen ? height : 0,
+               minHeight: isOpen ? 140 : 0,
+             }}
+             exit={

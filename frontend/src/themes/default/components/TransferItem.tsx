@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion, AnimatePresence } from "framer-motion";
 import {
   Dismiss16Regular,
@@ -7,6 +7,9 @@ import {
   DismissCircle20Filled,
   ArrowUpload20Regular,
   Clock20Regular,
+  Home16Regular,
+  ChevronRight12Regular,
+  ChevronDown12Regular,
 } from "@fluentui/react-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../../lib/cn";
@@ -25,6 +28,7 @@ import { Tooltip } from "./Tooltip";
 
 export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) {
   const shouldReduceMotion = useReducedMotion();
+  const [isLocationExpanded, setIsLocationExpanded] = useState(false);
   const { operationId, fileName, fileSize, progress, status, error, speed } = upload;
 
   const queryClient = useQueryClient();
@@ -67,33 +71,95 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
     }
     return `${Math.floor(seconds)}s`;
   };
+  const truncateMiddle = (str: string, maxLen: number) => {
+    if (str.length <= maxLen) return str;
+    const side = Math.floor((maxLen - 3) / 2);
+    return str.slice(0, side) + "..." + str.slice(str.length - side);
+  };
 
   const tooltipContent = (
-    <div className="flex flex-col gap-1">
-      <div className="font-semibold truncate max-w-[200px]">{fileName}</div>
-      <div className="flex flex-col text-[var(--tv-text-secondary)]">
+    <div className="flex flex-col gap-2 w-[280px]">
+      <div className="flex flex-col gap-0.5">
+        <div className="font-semibold truncate w-full text-[var(--tv-text-primary)]">
+          {fileName}
+        </div>
+        <div className="text-[11px] text-[var(--tv-text-secondary)]">
+          {formatBytes(fileSize)} • <span className="capitalize">{status.replace("_", " ")}</span>
+        </div>
+      </div>
+
+      <div className="h-px bg-[var(--tv-border-subtle)] -mx-1" />
+
+      <div className="flex flex-col gap-1.5 py-0.5 tabular-nums">
+        {upload.location && (
+          <div className="flex flex-col gap-0.5 text-[10px] pb-1">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsLocationExpanded(!isLocationExpanded);
+              }}
+              className="flex items-center gap-1 cursor-pointer bg-transparent border-none p-0 outline-none w-fit group"
+            >
+              {isLocationExpanded ? (
+                <ChevronDown12Regular className="text-[var(--tv-text-secondary)] opacity-50 group-hover:opacity-100" />
+              ) : (
+                <ChevronRight12Regular className="text-[var(--tv-text-secondary)] opacity-50 group-hover:opacity-100" />
+              )}
+              <span className="text-[var(--tv-text-secondary)] uppercase tracking-wider font-semibold text-[9px] group-hover:text-[var(--tv-text-primary)] transition-colors">Location</span>
+            </button>
+            
+            <AnimatePresence>
+              {isLocationExpanded && (
+                <motion.div 
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ ...springSnappy }}
+                  className="overflow-hidden"
+                >
+                  <div className="text-[var(--tv-text-primary)] leading-relaxed max-w-[280px] flex items-center gap-x-1 gap-y-0.5 flex-wrap pt-1.5 border-l border-[var(--tv-border-subtle)] ml-1.5 pl-2.5 my-0.5">
+                    {upload.location.split(" / ").map((part, i, arr) => (
+                      <span key={i} className="flex items-center gap-1">
+                        {i > 0 && <span className="text-[var(--tv-text-tertiary)] opacity-30 select-none">/</span>}
+                        {part === "My Vault" ? (
+                          <Home16Regular className="text-[var(--tv-accent-primary)] shrink-0" />
+                        ) : (
+                          <span 
+                            className={cn(
+                              "break-all",
+                              i < arr.length - 1 ? "text-[var(--tv-text-secondary)]" : "text-[var(--tv-text-primary)] font-medium"
+                            )}
+                            title={part}
+                          >
+                            {truncateMiddle(part || "", 24)}
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
         {speed && speed > 0 && (
-          <div className="flex justify-between gap-4">
-            <span>Speed</span>
-            <span className="text-[var(--tv-text-primary)]">{formatBytes(speed)}/s</span>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-[var(--tv-text-secondary)]">Speed</span>
+            <span className="font-medium text-[var(--tv-accent-primary)]">{formatBytes(speed)}/s</span>
           </div>
         )}
         {!isTerminal && progress < 100 && (
-          <div className="flex justify-between gap-4">
-            <span>Remaining</span>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-[var(--tv-text-secondary)]">Remaining</span>
             <span className="text-[var(--tv-text-primary)]">{formatBytes(remainingBytes)}</span>
           </div>
         )}
         {etaSeconds !== null && etaSeconds > 0 && !isTerminal && (
-          <div className="flex justify-between gap-4">
-            <span>ETA</span>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-[var(--tv-text-secondary)]">ETA</span>
             <span className="text-[var(--tv-text-primary)]">{formatETA(etaSeconds)}</span>
           </div>
         )}
-        <div className="flex justify-between gap-4">
-          <span>Status</span>
-          <span className="text-[var(--tv-text-primary)] capitalize">{status.replace("_", " ")}</span>
-        </div>
       </div>
     </div>
   );
@@ -136,7 +202,7 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
   })();
 
   return (
-    <Tooltip content={tooltipContent} side="left" sideOffset={12}>
+    <Tooltip content={tooltipContent} side="left" sideOffset={12} interactive={true}>
       <motion.div
         layout
         initial={

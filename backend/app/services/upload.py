@@ -249,6 +249,10 @@ async def execute_upload(
             logger.info("Telegram client disconnected — reconnecting before upload %s", operation_id)
             await c.connect()
 
+    # Track bytes sent per split independently so the aggregated progress
+    # is always the sum across all splits, not the last split to report.
+    _split_bytes_sent: list[int] = [0] * num_splits
+
     async def _upload_split(split_index: int) -> UploadedSplitResult:
         account_id, client = client_snapshot[(account_offset + split_index) % len(client_snapshot)]
         offset = split_index * _SPLIT_SIZE
@@ -256,9 +260,11 @@ async def execute_upload(
         split_name = f"{filename}.part{split_index}" if multi else filename
 
         async def _on_progress(sent: int, _total: int) -> None:
+            _split_bytes_sent[split_index] = sent
+            total_sent = sum(_split_bytes_sent)
             await registry.emit_progress(
                 operation_id,
-                offset + sent,
+                total_sent,
                 total_size,
                 message=f"Uploading to Telegram… part {split_index + 1} of {num_splits}",
             )

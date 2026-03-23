@@ -6,6 +6,10 @@ export function formatBytes(bytes: number, decimals = 1): string {
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  const value = parseFloat((bytes / Math.pow(k, i)).toFixed(decimals));
-  return `${value} ${sizes[i]}`;
+  const value = bytes / Math.pow(k, i);
+  
+  // No decimals for bytes
+  if (i === 0) return `${Math.floor(value)} B`;
+  
+  return `${value.toFixed(decimals)} ${sizes[i]}`;
 }

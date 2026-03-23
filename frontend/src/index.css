@@ -42,6 +42,10 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
 #root {
   display: flex;
   flex-direction: column;
