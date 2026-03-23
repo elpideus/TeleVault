@@ -1160,6 +1160,7 @@ const MOCK_UPLOADS: UploadState[] = [
     fileSize: 142_800_000,
     progress: 0,
     status: "uploading",
+    createdAt: Date.now() - 10000,
   },
   {
     id: "op-2",
@@ -1168,6 +1169,7 @@ const MOCK_UPLOADS: UploadState[] = [
     fileSize: 8_430_000,
     progress: 45,
     status: "uploading",
+    createdAt: Date.now() - 5000,
   },
   {
     id: "op-3",
@@ -1176,6 +1178,7 @@ const MOCK_UPLOADS: UploadState[] = [
     fileSize: 214_000,
     progress: 100,
     status: "complete",
+    createdAt: Date.now() - 60000,
   },
   {
     id: "op-4",
@@ -1185,6 +1188,7 @@ const MOCK_UPLOADS: UploadState[] = [
     progress: 30,
     status: "error",
     error: "Server rejected file",
+    createdAt: Date.now() - 30000,
   },
 ];
 

@@ -276,8 +276,8 @@ export function TransfersTray({
       if (a.isDuplicate && !b.isDuplicate) return 1;
       if (!a.isDuplicate && b.isDuplicate) return -1;
     }
-    // Stable tie-breaker for active items
-    return a.id.localeCompare(b.id);
+    // Stable tie-breaker: newest first
+    return b.createdAt - a.createdAt;
   });
 
   return (

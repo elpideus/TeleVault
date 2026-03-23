@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.1] - 2026-03-23
+
+### Improvements
+
+- **Frontend**: Upload semaphores (`hashSem` / `tvSem`) are now global module-level singletons in `uploadSemaphores.ts`, preventing per-render recreation and ensuring the concurrency cap is truly global across upload batches.
+- **Frontend**: `UploadState` gains a `createdAt` timestamp field; the Transfers tray now sorts active items newest-first using this field instead of the non-deterministic ID string comparison.
+- **Frontend**: `PreviewPage` mock uploads include `createdAt` values for realistic tray previews.
+
+---
+
 ## [1.4.0] - 2026-03-23
 
 ### Added

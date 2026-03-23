@@ -16,6 +16,7 @@ export interface UploadState {
   location?: string;
   speed?: number; // bytes per second
   lastUpdate?: number; // timestamp
+  createdAt: number; // For stable chronological sorting
 }
 
 interface UploadStore {
@@ -44,6 +45,7 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
     next.set(upload.operationId, {
       ...upload,
       lastUpdate: Date.now(),
+      createdAt: upload.createdAt ?? Date.now(),
       speed: 0,
     });
     set({ uploads: next });

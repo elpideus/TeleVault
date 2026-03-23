@@ -20,7 +20,7 @@ import { useSelectionStore } from "../../store/selectionStore";
 import { useLassoSelection } from "../../hooks/useLassoSelection";
 import { useGlobalProgress } from "../../hooks/useGlobalProgress";
 import { toast } from "../../lib/toast";
-import { createSemaphore } from "../../lib/semaphore";
+import { hashSem, getTvSem } from "../../lib/uploadSemaphores";
 import { ConfirmModal } from "../../themes/default/components/ConfirmModal";
 import { MoveModal } from "../../themes/default/components/MoveModal";
 import type { FileItem, FolderItem } from "../../types/files";
@@ -79,8 +79,7 @@ export function FileExplorer() {
 
   // Shared across all upload batches so hashing is always sequential and the
   // total number of concurrent TeleVault XHR uploads is capped globally.
-  const hashSemRef = useRef(createSemaphore(1));
-  const tvSemRef = useRef<ReturnType<typeof createSemaphore> | null>(null);
+  // These are now handled by global instances in uploadSemaphores.ts.
 
   // ── Data fetching ──────────────────────────────────────────────────────────
   const {
@@ -268,6 +267,7 @@ export function FileExplorer() {
           status: "queued",
           folderId: slug || undefined,
           location: segments.map((s) => s.label).join(" / "),
+          createdAt: Date.now(),
         });
       }
 
@@ -276,20 +276,14 @@ export function FileExplorer() {
       //   tvSem(N)    - N files upload XHR simultaneously based on connected accounts
       //   Telegram    - backend N-worker pool
       void (async () => {
-        // Initialise tvSem once — reuse across batches so the cap is global.
-        if (!tvSemRef.current) {
-          let n = 1;
-          try {
-            const result = await getConcurrency();
-            n = Math.max(1, result.concurrency);
-          } catch (e) {
-            console.error("Failed to fetch concurrency, defaulting to 1", e);
-          }
-          tvSemRef.current = createSemaphore(n);
+        let n = 1;
+        try {
+          const result = await getConcurrency();
+          n = Math.max(1, result.concurrency);
+        } catch (e) {
+          console.error("Failed to fetch concurrency, defaulting to 1", e);
         }
-
-        const hashSem = hashSemRef.current;
-        const tvSem = tvSemRef.current;
+        const tvSem = getTvSem(n);
 
         await Promise.allSettled(
           fileEntries.map(async ({ file, tempId }) => {
