@@ -119,8 +119,8 @@ chunks_list = [raw[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE] for i in range(file_part
 Do **not** read the entire split into memory (up to 2 GB). Instead, use a bounded `asyncio.Queue` as a producer/consumer channel:
 
 ```python
-# maxsize bounds peak memory to: connections * 2 * 512 KB ≈ 8 MB at default settings
-queue: asyncio.Queue[tuple[int, bytes] | None] = asyncio.Queue(maxsize=connections * 2)
+# maxsize bounds peak memory to: len(senders) * 2 * 512 KB ≈ 8 MB at default settings
+queue: asyncio.Queue[tuple[int, bytes] | None] = asyncio.Queue(maxsize=len(senders) * 2)
 ```
 
 The producer coroutine reads chunks sequentially and pushes `(part_index, data)` tuples. Consumers pop and upload. This is detailed in the upload loop section below.
@@ -299,13 +299,6 @@ async def fast_upload_document(
 
 ---
 
-## Modified: `backend/app/telegram/operations.py`
-
-- Import `fast_upload_document` from `.fast_upload`
-- Keep existing `upload_document` (no removal)
-
----
-
 ## Modified: `backend/app/services/upload.py`
 
 - Replace `upload_document` call in `_upload_split` with `fast_upload_document`
@@ -329,7 +322,7 @@ parallel_upload_connections: int = Field(default=8, ge=1)
 | File size | Peak RAM for chunk buffer |
 | --- | --- |
 | ≤ 10 MB (small path) | ~10 MB (full file read once) |
-| > 10 MB (big path) | `connections * 2 * 512 KB` ≈ 8 MB at default settings |
+| > 10 MB (big path) | `len(senders) * 2 * 512 KB` ≈ 8 MB at default settings (senders ≤ connections) |
 | 2 GB split (worst case) | ~8 MB (producer/consumer queue) |
 
 ---
