@@ -61,9 +61,8 @@ class Settings(BaseSettings):
     api_port: int = 8000
     upload_chunk_size: int = 2 * 1024 * 1024  # 2 MB — at 20 KB/s this still completes in ~100s, well within Cloudflare's timeout
     upload_max_parallel_chunks: int = 2  # keep server pressure low; more parallelism caused 524s under load
+    # Controls concurrent MTProto sender connections per split; set via PARALLEL_UPLOAD_CONNECTIONS env var.
     parallel_upload_connections: int = Field(default=8, ge=1)
-    # Controls concurrent MTProto sender connections per split when uploading to Telegram.
-    # Reads from PARALLEL_UPLOAD_CONNECTIONS env var.
 
     @field_validator("cors_origins", mode="before")
     @classmethod

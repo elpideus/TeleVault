@@ -10,16 +10,17 @@ Do NOT re-export from operations.py — circular import risk.
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import io
+import hashlib  # noqa: F401  (used by fast_upload_file)
+import io  # noqa: F401
 import logging
-import math
-import random
+import math  # noqa: F401
+import random  # noqa: F401
 from typing import TYPE_CHECKING, Awaitable, Callable
 
+# These symbols are used by fast_upload_file and fast_upload_document (added in later tasks).  # noqa: F401
 from telethon.errors import FloodWaitError
-from telethon.tl.functions.upload import SaveBigFilePartRequest, SaveFilePartRequest
-from telethon.tl.types import DocumentAttributeFilename, InputFile, InputFileBig
+from telethon.tl.functions.upload import SaveBigFilePartRequest, SaveFilePartRequest  # noqa: F401
+from telethon.tl.types import DocumentAttributeFilename, InputFile, InputFileBig  # noqa: F401
 
 if TYPE_CHECKING:
     from telethon import TelegramClient
@@ -59,14 +60,14 @@ class _ConcurrencyController:
         async with self._cond:
             self._limit = max(1, self._limit - 1)
             self._cond.notify_all()
-        logger.warning(
-            "Flood wait: parallel upload concurrency reduced to %d", self._limit
-        )
+            logger.warning(
+                "Flood wait: parallel upload concurrency reduced to %d", self._limit
+            )
 
     async def on_connection_error(self) -> None:
         async with self._cond:
             self._limit = max(1, self._limit - 1)
             self._cond.notify_all()
-        logger.warning(
-            "Connection error: parallel upload concurrency reduced to %d", self._limit
-        )
+            logger.warning(
+                "Connection error: parallel upload concurrency reduced to %d", self._limit
+            )
