@@ -71,3 +71,104 @@ class _ConcurrencyController:
             logger.warning(
                 "Connection error: parallel upload concurrency reduced to %d", self._limit
             )
+
+
+async def fast_upload_file(
+    client: "TelegramClient",
+    reader: io.RawIOBase,
+    size: int,
+    name: str,
+    connections: int,
+    progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
+) -> InputFile | InputFileBig:
+    """Upload all chunks of a file in parallel using multiple MTProto senders.
+
+    Small files (≤ SMALL_FILE_THRESHOLD): full read upfront, SaveFilePartRequest, InputFile.
+    Big files (> SMALL_FILE_THRESHOLD): streaming producer/consumer, SaveBigFilePartRequest, InputFileBig.
+    """
+    if size == 0:
+        raise ValueError("Cannot upload zero-byte file")
+
+    big = size > SMALL_FILE_THRESHOLD
+    file_id = random.randint(-(2**63), 2**63 - 1)
+    file_parts = math.ceil(size / CHUNK_SIZE)
+    dc_id: int = client.session.dc_id
+
+    # ── Borrow senders ────────────────────────────────────────────────────────
+    senders = []
+    for _ in range(min(connections, file_parts)):
+        try:
+            sender = await client._borrow_exported_sender(dc_id)
+            senders.append(sender)
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds)
+            try:
+                senders.append(await client._borrow_exported_sender(dc_id))
+            except Exception:
+                pass
+        except Exception:
+            pass
+    if not senders:
+        raise RuntimeError("Could not borrow any MTProto sender for parallel upload")
+
+    # Controller is initialized AFTER borrowing so limit == actual sender count.
+    controller = _ConcurrencyController(len(senders))
+
+    # ── Small file path ───────────────────────────────────────────────────────
+    if not big:
+        raw = reader.read(size)
+        md5_hex = hashlib.md5(raw).hexdigest()
+        file_parts = math.ceil(len(raw) / CHUNK_SIZE)
+        chunks_list = [
+            raw[i * CHUNK_SIZE : (i + 1) * CHUNK_SIZE]
+            for i in range(file_parts)
+        ]
+        bytes_uploaded: list[int] = [0] * file_parts
+
+        async def _upload_chunk_small(part_index: int, data: bytes) -> None:
+            max_retries = 5
+            for attempt in range(max_retries):
+                acquired = False
+                try:
+                    await controller.acquire()
+                    acquired = True
+                    sender = senders[part_index % len(senders)]
+                    await sender.send(SaveFilePartRequest(file_id, part_index, data))
+                    if bytes_uploaded[part_index] == 0:
+                        bytes_uploaded[part_index] = len(data)
+                    if progress_callback:
+                        await progress_callback(sum(bytes_uploaded), size)
+                    return  # success
+                except FloodWaitError as e:
+                    await controller.on_flood_wait(e.seconds)
+                except (ConnectionError, OSError):
+                    await controller.on_connection_error()
+                except Exception:
+                    if attempt == max_retries - 1:
+                        raise
+                    await asyncio.sleep(2**attempt)
+                finally:
+                    if acquired:
+                        await controller.release()
+            raise RuntimeError(f"Chunk {part_index} failed after {max_retries} attempts")
+
+        try:
+            await asyncio.gather(
+                *[_upload_chunk_small(i, c) for i, c in enumerate(chunks_list)]
+            )
+        finally:
+            for s in senders:
+                try:
+                    await client._return_exported_sender(s)
+                except Exception:
+                    pass
+
+        return InputFile(
+            id=file_id,
+            parts=file_parts,
+            name=name,
+            md5_checksum=md5_hex,
+        )
+
+    # ── Big file path (implemented in Task 4) ─────────────────────────────────
+    raise NotImplementedError("Big file path not yet implemented")

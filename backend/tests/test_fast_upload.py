@@ -25,6 +25,7 @@ from app.telegram.fast_upload import (
     _ConcurrencyController,
     CHUNK_SIZE,
 )
+from telethon.tl.types import InputFile, InputFileBig
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -122,3 +123,78 @@ async def test_controller_reduction_blocks_new_acquisition():
     await asyncio.sleep(0.02)
     assert not acquired  # blocked
     task.cancel()
+
+
+# ── fast_upload_file — small file (≤ 10 MB) tests ────────────────────────────
+
+from app.telegram.fast_upload import fast_upload_file
+
+
+async def test_small_file_returns_input_file():
+    content = b"hello world"
+    reader = io.BytesIO(content)
+    client, _ = _make_client()
+    result = await fast_upload_file(client, reader, len(content), "test.txt", connections=2)
+    assert isinstance(result, InputFile)
+
+
+async def test_small_file_correct_md5():
+    import hashlib
+    content = b"x" * 1024
+    reader = io.BytesIO(content)
+    client, _ = _make_client()
+    result = await fast_upload_file(client, reader, len(content), "f.bin", connections=1)
+    assert result.md5_checksum == hashlib.md5(content).hexdigest()
+
+
+async def test_small_file_uses_save_file_part_request():
+    from telethon.tl.functions.upload import SaveFilePartRequest, SaveBigFilePartRequest
+    content = b"a" * (CHUNK_SIZE + 1)  # 2 chunks
+    reader = io.BytesIO(content)
+    client, sender = _make_client()
+    sent_requests = []
+    sender.send = AsyncMock(side_effect=lambda r: sent_requests.append(r) or True)
+    await fast_upload_file(client, reader, len(content), "f.bin", connections=2)
+    assert all(isinstance(r, SaveFilePartRequest) for r in sent_requests)
+    assert len(sent_requests) == 2
+
+
+async def test_small_file_does_not_use_save_big_file_part_request():
+    from telethon.tl.functions.upload import SaveBigFilePartRequest
+    content = b"b" * 100
+    reader = io.BytesIO(content)
+    client, sender = _make_client()
+    sent_requests = []
+    sender.send = AsyncMock(side_effect=lambda r: sent_requests.append(r) or True)
+    await fast_upload_file(client, reader, len(content), "f.bin", connections=1)
+    assert not any(isinstance(r, SaveBigFilePartRequest) for r in sent_requests)
+
+
+async def test_zero_size_raises_value_error():
+    import pytest
+    client, _ = _make_client()
+    with pytest.raises(ValueError, match="zero-byte"):
+        await fast_upload_file(client, io.BytesIO(b""), 0, "f.bin", connections=1)
+
+
+async def test_progress_callback_called():
+    content = b"p" * (CHUNK_SIZE * 3)
+    reader = io.BytesIO(content)
+    client, _ = _make_client()
+    calls = []
+
+    async def cb(sent, total):
+        calls.append((sent, total))
+
+    await fast_upload_file(client, reader, len(content), "f.bin", connections=2, progress_callback=cb)
+    assert len(calls) == 3
+    assert calls[-1][0] == len(content)
+    assert calls[-1][1] == len(content)
+
+
+async def test_small_file_senders_returned():
+    content = b"r" * 100
+    reader = io.BytesIO(content)
+    client, _ = _make_client()
+    await fast_upload_file(client, reader, len(content), "f.bin", connections=2)
+    assert client._return_exported_sender.called
