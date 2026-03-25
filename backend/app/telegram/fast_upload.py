@@ -96,20 +96,34 @@ async def fast_upload_file(
 
     # ── Borrow senders ────────────────────────────────────────────────────────
     senders = []
+    _borrowed: list = []  # only borrowed senders need _return_exported_sender
+
     for _ in range(min(connections, file_parts)):
         try:
             sender = await client._borrow_exported_sender(dc_id)
             senders.append(sender)
+            _borrowed.append(sender)
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds)
             try:
-                senders.append(await client._borrow_exported_sender(dc_id))
-            except Exception:
-                pass
-        except Exception:
-            pass
+                sender = await client._borrow_exported_sender(dc_id)
+                senders.append(sender)
+                _borrowed.append(sender)
+            except Exception as exc:
+                logger.warning("Failed to borrow exported sender after flood wait: %s", exc)
+        except Exception as exc:
+            logger.warning("Failed to borrow exported sender: %s", exc)
+
+    # Fallback: if no exported senders could be borrowed (e.g. Telethon internals
+    # unavailable), use the primary connection directly.  Uploads still work;
+    # they just run on a single connection instead of multiple.
     if not senders:
-        raise RuntimeError("Could not borrow any MTProto sender for parallel upload")
+        logger.warning(
+            "Could not borrow any exported sender; falling back to primary connection "
+            "(single-connection upload — no parallelism)"
+        )
+        senders.append(client._sender)
+        # client._sender must NOT be passed to _return_exported_sender — do not add to _borrowed.
 
     # Controller is initialized AFTER borrowing so limit == actual sender count.
     controller = _ConcurrencyController(len(senders))
@@ -157,7 +171,7 @@ async def fast_upload_file(
                 *[_upload_chunk_small(i, c) for i, c in enumerate(chunks_list)]
             )
         finally:
-            for s in senders:
+            for s in _borrowed:
                 try:
                     await client._return_exported_sender(s)
                 except Exception:
@@ -240,7 +254,7 @@ async def fast_upload_file(
         for t in producers + consumers:
             if not t.done():
                 t.cancel()
-        for s in senders:
+        for s in _borrowed:
             try:
                 await client._return_exported_sender(s)
             except Exception:
