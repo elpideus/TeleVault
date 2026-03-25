@@ -197,13 +197,13 @@ export function TransferItem({ upload, onCancel, onRemove }: TransferItemProps) 
     if (status === "upload_queued")
       return <span style={{ color: "var(--tv-text-disabled)", marginLeft: 6 }}>Queued (TeleVault)</span>;
     if (status === "hashing")
-      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Hashing {Math.round(progress)}%</span>;
+      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Hashing {progress < 1 ? progress.toFixed(1) : Math.round(progress)}%</span>;
     if (status === "uploading")
-      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Uploading (TeleVault)... {Math.round(progress)}%</span>;
+      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Uploading (TeleVault)... {progress < 1 ? progress.toFixed(1) : Math.round(progress)}%</span>;
     if (status === "staged")
       return <span style={{ color: "var(--tv-text-secondary)", marginLeft: 6 }}>Queued (Telegram)</span>;
     if (status === "processing")
-      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Uploading (Telegram)... {Math.round(progress)}%</span>;
+      return <span style={{ color: "var(--tv-accent-primary)", marginLeft: 6 }}>Uploading (Telegram)... {progress < 1 ? progress.toFixed(1) : Math.round(progress)}%</span>;
     if (status === "error" && error)
       return <span style={{ color: "var(--tv-error)", marginLeft: 6 }} className="truncate block">{error}</span>;
     if (upload.isDuplicate)

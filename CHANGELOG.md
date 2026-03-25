@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] - 2026-03-25
+
+### Added
+
+- **Backend**: Parallel chunk upload support — new `fast_upload_file` / `fast_upload_document` functions use a producer/consumer queue with a `_ConcurrencyController` that adaptively scales concurrent Telegram connections. Configurable via the new `PARALLEL_UPLOAD_CONNECTIONS` setting (default 8).
+- **Frontend**: Combined ETA tooltip on the Transfers tray header — shows estimated time remaining, total bytes remaining, and aggregated upload speed across all active transfers.
+
+### Improvements
+
+- **Backend**: Connection locking in `ClientPool` — per-account `asyncio.Lock` prevents concurrent `connect()` / `get_me()` calls from racing during initialization, reconnection, and health checks.
+- **Backend**: `UploadWorkerPool` now emits an SSE error event when an unhandled exception occurs, preventing uploads from appearing stuck at 0% in the UI.
+- **Backend**: `upload_document` wraps `send_file` in a try/except and logs the full exception before re-raising, improving diagnosability of Telethon failures.
+- **Backend**: Telethon internal logging silenced to `WARNING`; high-frequency `/upload/chunk/` requests are filtered from uvicorn access logs.
+- **Frontend**: SSE reconnect logic proactively refreshes the access token before reconnecting to avoid silent 401 failures on expired tokens.
+- **Frontend**: After SSE reconnects, `reconcileProcessingUploads` queries the DB for uploads stuck in `processing`/`staged` state so events missed while SSE was down are recovered.
+- **Frontend**: `check-hash` POST is retried once on 401 (after the auth middleware has already stored a fresh token) so a token refresh mid-upload no longer blocks deduplication.
+- **Frontend**: Upload `createdAt` timestamps are offset by insertion index so multiple simultaneous drops preserve their drop order in the tray.
+- **Frontend**: Speed display decays to zero after 10 s with no progress change; stale XHR speed is cleared when an upload is promoted to the Telegram phase.
+- **Frontend**: Transfer item progress labels now show one decimal place for values below 1% for better granularity at the start of large uploads.
+- **Frontend**: Transfers tray sort order updated — `uploading` ranks highest among active items, Telegram-phase items (`processing`/`staged`) rank below hashing/queued; tie-breaker is oldest-first to match the original drop order.
+- **Frontend**: Tooltip z-index raised to 300 to ensure it renders above the Transfers tray.
+
+### Bug Fixes
+
+- **Backend**: Fixed `_borrow_exported_sender` fallback — operations now use `client._sender` directly when the exported sender is unavailable, resolving upload failures on some Telethon versions.
+
+---
+
 ## [1.4.1] - 2026-03-23
 
 ### Improvements

@@ -48,7 +48,7 @@ export function Tooltip({
           sideOffset={sideOffset}
           className={cn(
             // Layout & surface
-            "z-50 max-w-xs px-3 py-2",
+            "z-[300] max-w-xs px-3 py-2",
             "rounded-[var(--tv-radius-md)]",
             "border border-[var(--tv-border-strong)]",
             "text-[var(--tv-text-primary)]",

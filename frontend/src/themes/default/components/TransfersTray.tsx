@@ -10,7 +10,9 @@ import { springStandard, springGentle, exitTransition } from "../../../lib/sprin
 import { useUploadStore, type UploadState } from "../../../store/uploadStore";
 import { TransferItem } from "./TransferItem";
 import { ConfirmModal } from "./ConfirmModal";
+import { Tooltip } from "./Tooltip";
 import { cancelUpload, cancelAllUploads } from "../../../api/files";
+import { formatBytes } from "../../../lib/formatBytes";
 
 // ── TransfersTrayToggle ─────────────────────────────────────────────────────
 
@@ -131,6 +133,36 @@ export function TransfersTray({
   const remainingCount = uploads.filter(
     (u) => u.status !== "complete" && u.status !== "error" && u.status !== "cancelled",
   ).length;
+
+  // ── Combined ETA ──────────────────────────────────────────────────────────
+  // Sum remaining bytes and total speed across all active uploads (uploading /
+  // processing). Queued uploads are included in remaining bytes but contribute
+  // no speed (they haven't started yet).
+  const formatETAHeader = (seconds: number): string => {
+    if (seconds > 3600) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      return `${h}h ${m}m`;
+    }
+    if (seconds > 60) {
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${m}m ${s}s`;
+    }
+    return `${Math.ceil(seconds)}s`;
+  };
+
+  const activeUploads = uploads.filter(
+    (u) => u.status !== "complete" && u.status !== "error" && u.status !== "cancelled",
+  );
+  const totalRemainingBytes = activeUploads.reduce((acc, u) => {
+    return acc + u.fileSize * (1 - u.progress / 100);
+  }, 0);
+  const totalSpeed = activeUploads.reduce((acc, u) => {
+    const isActivelyTransferring = u.status === "uploading" || u.status === "processing";
+    return acc + (isActivelyTransferring && u.speed && u.speed > 0 ? u.speed : 0);
+  }, 0);
+  const combinedEtaSeconds = totalSpeed > 0 ? totalRemainingBytes / totalSpeed : null;
   const hasUploads = uploads.length > 0;
 
   // Terminal = fully settled: complete, error, or cancelled.
@@ -255,29 +287,31 @@ export function TransfersTray({
     };
   }, [isResizing]);
 
-  // Sort: errors first → active (processing/staged/uploading/hashing) → queued → complete → cancelled
+  // Sort: errors first → active (uploading → hashing → queued) → complete → cancelled
   const sortedUploads = [...uploads].sort((a, b) => {
     const priority: Record<string, number> = {
       error: 0,
-      processing: 1,
-      staged: 1,
       uploading: 1,
-      upload_queued: 1,
-      hashing: 1,
-      queued: 2,
-      complete: 3,
-      cancelled: 4,
+      hashing: 2,
+      upload_queued: 3,
+      processing: 4,
+      staged: 4,
+      queued: 5,
+      complete: 6,
+      cancelled: 7,
     };
     const pA = priority[a.status] ?? 9;
     const pB = priority[b.status] ?? 9;
     if (pA !== pB) return pA - pB;
+
     // Within "complete": non-duplicates before duplicates
     if (a.status === "complete" && b.status === "complete") {
       if (a.isDuplicate && !b.isDuplicate) return 1;
       if (!a.isDuplicate && b.isDuplicate) return -1;
     }
-    // Stable tie-breaker: newest first
-    return b.createdAt - a.createdAt;
+
+    // Stable tie-breaker: oldest first (matches drop order)
+    return a.createdAt - b.createdAt;
   });
 
   return (
@@ -345,14 +379,54 @@ export function TransfersTray({
               className="flex items-center gap-2 px-3 py-2.5 flex-shrink-0"
               style={{ borderBottom: "1px solid var(--tv-border-subtle)" }}
             >
-              <div className="flex -space-x-1 flex-shrink-0">
-                <ArrowUpload20Regular
-                  style={{ color: "var(--tv-accent-primary)", width: 18, height: 18 }}
-                />
-                <ArrowDownload20Regular
-                  style={{ color: "var(--tv-accent-primary)", width: 18, height: 18 }}
-                />
-              </div>
+              <Tooltip
+                content={
+                  combinedEtaSeconds !== null && combinedEtaSeconds > 0 ? (
+                    <div className="flex flex-col gap-1 min-w-[160px]">
+                      <div className="text-[11px] text-[var(--tv-text-secondary)] uppercase tracking-wider font-semibold">
+                        Combined ETA
+                      </div>
+                      <div className="text-[var(--tv-text-primary)] font-semibold tabular-nums">
+                        ~{formatETAHeader(combinedEtaSeconds)}
+                      </div>
+                      <div className="h-px bg-[var(--tv-border-subtle)] -mx-1 my-0.5" />
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-[var(--tv-text-secondary)]">Remaining</span>
+                        <span className="text-[var(--tv-text-primary)] tabular-nums">{formatBytes(totalRemainingBytes)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-[var(--tv-text-secondary)]">Total speed</span>
+                        <span className="text-[var(--tv-accent-primary)] tabular-nums">{formatBytes(totalSpeed)}/s</span>
+                      </div>
+                    </div>
+                  ) : activeUploads.length > 0 ? (
+                    <div className="flex flex-col gap-1 min-w-[160px]">
+                      <div className="text-[11px] text-[var(--tv-text-secondary)] uppercase tracking-wider font-semibold">
+                        Combined ETA
+                      </div>
+                      <div className="text-[var(--tv-text-secondary)] text-[11px]">
+                        Calculating…
+                      </div>
+                      <div className="h-px bg-[var(--tv-border-subtle)] -mx-1 my-0.5" />
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-[var(--tv-text-secondary)]">Remaining</span>
+                        <span className="text-[var(--tv-text-primary)] tabular-nums">{formatBytes(totalRemainingBytes)}</span>
+                      </div>
+                    </div>
+                  ) : null
+                }
+                side="top"
+                sideOffset={8}
+              >
+                <div className="flex -space-x-1 flex-shrink-0 cursor-default">
+                  <ArrowUpload20Regular
+                    style={{ color: "var(--tv-accent-primary)", width: 18, height: 18 }}
+                  />
+                  <ArrowDownload20Regular
+                    style={{ color: "var(--tv-accent-primary)", width: 18, height: 18 }}
+                  />
+                </div>
+              </Tooltip>
               <span
                 className="flex-1"
                 style={{

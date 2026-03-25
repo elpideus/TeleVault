@@ -168,9 +168,19 @@ export async function uploadFile(
   await onHashComplete?.();
 
   // 2. Pre-check for duplicate before uploading the full file
-  const { error: checkError, response: checkRes } = await apiClient.POST("/api/v1/files/check-hash" as any, {
+  let { error: checkError, response: checkRes } = await apiClient.POST("/api/v1/files/check-hash" as any, {
     body: { file_hash: hash },
   });
+
+  // The authMiddleware refreshes the token on 401 but cannot replay POST
+  // requests whose body was already consumed (see client.ts comment).
+  // By the time we see the 401 here the middleware has already stored the new
+  // token via setTokens(), so a plain retry picks it up automatically.
+  if (checkRes.status === 401) {
+    ({ error: checkError, response: checkRes } = await apiClient.POST("/api/v1/files/check-hash" as any, {
+      body: { file_hash: hash },
+    }));
+  }
 
   if (checkRes.status === 409 && checkError) {
     const errBody = checkError as any;

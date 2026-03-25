@@ -257,7 +257,7 @@ export function FileExplorer() {
         stableId: generateUUID(),
       }));
 
-      for (const { file, tempId, stableId } of fileEntries) {
+      for (const [i, { file, tempId, stableId }] of fileEntries.entries()) {
         addUpload({
           id: stableId,
           operationId: tempId,
@@ -267,7 +267,7 @@ export function FileExplorer() {
           status: "queued",
           folderId: slug || undefined,
           location: segments.map((s) => s.label).join(" / "),
-          createdAt: Date.now(),
+          createdAt: Date.now() + i,
         });
       }
 

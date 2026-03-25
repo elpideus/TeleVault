@@ -211,5 +211,14 @@ class UploadWorkerPool:
                     "Worker caught unhandled exception for operation %s",
                     job.operation_id,
                 )
+                # Notify the frontend so the upload doesn't stay stuck at 0%.
+                try:
+                    await self._registry.emit_error(
+                        job.operation_id,
+                        "Internal server error",
+                        message="Upload failed due to an internal error",
+                    )
+                except Exception:
+                    pass
             finally:
                 queue.task_done()

@@ -35,19 +35,29 @@ async def upload_document(
     size: int,
     progress_callback=None,
 ) -> UploadedSplit:
-    msg = await client.send_file(
-        channel_id,
-        document,
-        attributes=[DocumentAttributeFilename(file_name=filename)],
-        force_document=True,
-        file_size=size,
-        progress_callback=progress_callback,
-    )
-    return UploadedSplit(
-        message_id=msg.id,
-        file_id=str(msg.document.id),
-        file_unique_id=str(msg.document.access_hash),
-    )
+    try:
+        msg = await client.send_file(
+            channel_id,
+            document,
+            attributes=[DocumentAttributeFilename(file_name=filename)],
+            force_document=True,
+            file_size=size,
+            progress_callback=progress_callback,
+        )
+        return UploadedSplit(
+            message_id=msg.id,
+            file_id=str(msg.document.id),
+            file_unique_id=str(msg.document.access_hash),
+        )
+    except Exception as exc:
+        logger.error(
+            "Telethon send_file failed for %s (%d bytes): %s",
+            filename,
+            size,
+            str(exc),
+            exc_info=True,
+        )
+        raise
 
 
 async def download_document(

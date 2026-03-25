@@ -39,6 +39,7 @@ class ClientPool:
         self._pending_phone: dict[str, PendingPhoneLogin] = {}
         self._pending_qr: dict[str, PendingQRLogin] = {}
         self._rr_index: dict[int, int] = {}  # owner_telegram_id → next index
+        self._locks: dict[uuid.UUID, asyncio.Lock] = {}  # account_id → Lock
         self._on_account_change_callbacks: list = []  # list[Callable[[int, int], None]]
 
     async def initialize(self, session: AsyncSession) -> None:
@@ -58,7 +59,9 @@ class ClientPool:
                     settings.telegram_api_hash,
                     flood_sleep_threshold=60,
                 )
-                await client.connect()
+                self._locks[account.id] = asyncio.Lock()
+                async with self._locks[account.id]:
+                    await client.connect()
                 self._clients[account.id] = client
                 self._owners[account.id] = account.owner_telegram_id
                 logger.info("Connected Telegram account %s", account.id)
@@ -106,7 +109,9 @@ class ClientPool:
             settings.telegram_api_id,
             settings.telegram_api_hash,
         )
-        await client.connect()
+        self._locks[account_id] = asyncio.Lock()
+        async with self._locks[account_id]:
+            await client.connect()
         self._clients[account_id] = client
         if owner_telegram_id:
             self._owners[account_id] = owner_telegram_id
@@ -150,6 +155,12 @@ class ClientPool:
         self._rr_index[owner_telegram_id] = idx + 1  # ever-increasing; modulo applied at read
         return clients[idx % len(clients)]
 
+    def get_lock(self, account_id: uuid.UUID) -> asyncio.Lock:
+        """Return the connection lock for an account."""
+        if account_id not in self._locks:
+            self._locks[account_id] = asyncio.Lock()
+        return self._locks[account_id]
+
     async def start_health_check_loop(self, session_factory) -> None:
         """Run every 30 minutes. Re-connects dropped clients, marks revoked sessions inactive."""
         from telethon.errors import (
@@ -179,18 +190,22 @@ class ClientPool:
                 if client is None:
                     continue
 
-                # 1. Reconnect if TCP connection dropped
+                # 1. Reconnect if TCP connection dropped — localized check
                 if not client.is_connected():
                     logger.info("Account %s disconnected — reconnecting", account_id)
+                    lock = self.get_lock(account_id)
                     try:
-                        await client.connect()
+                        async with lock:
+                            if not client.is_connected():
+                                await client.connect()
                     except Exception:
                         logger.exception("Reconnect failed for account %s", account_id)
                         continue
 
                 # 2. Verify session is still valid
                 try:
-                    await client.get_me()
+                    async with self.get_lock(account_id):
+                        await client.get_me()
 
                     async with session_factory() as db:
                         ta = await db.get(TelegramAccount, account_id)
@@ -227,6 +242,7 @@ class ClientPool:
     async def remove_client(self, account_id: uuid.UUID) -> None:
         client = self._clients.pop(account_id, None)
         self._owners.pop(account_id, None)
+        self._locks.pop(account_id, None)
         if client is not None:
             await client.disconnect()
             logger.info("Removed Telegram account %s from pool", account_id)

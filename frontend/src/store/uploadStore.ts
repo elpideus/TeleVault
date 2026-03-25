@@ -58,11 +58,12 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
       const next = new Map<string, UploadState>();
       for (const [key, value] of current.entries()) {
         if (key === tempId) {
-          next.set(realId, { 
-            ...existing, 
-            operationId: realId, 
+          next.set(realId, {
+            ...existing,
+            operationId: realId,
             fileId,
             lastUpdate: Date.now(), // Reset timing on promotion
+            speed: 0,              // Clear stale XHR speed for Telegram phase
             location: existing.location,
           });
         } else {
@@ -97,18 +98,23 @@ export const useUploadStore = create<UploadStore>()((set, get) => ({
         if (deltaProgress > 0) {
           const deltaBytes = (deltaProgress / 100) * existing.fileSize;
           const currentSpeed = deltaBytes / deltaTime;
-          
+
           // Smooth the speed
           speed = speed === 0 ? currentSpeed : speed * 0.7 + currentSpeed * 0.3;
         } else if (deltaProgress < 0) {
           // Progress reset (e.g. starting a new phase)
           speed = 0;
+        } else {
+          // No progress — decay speed toward zero after 10s with no change
+          if (deltaTime > 10) {
+            speed = 0;
+          }
         }
         next.set(operationId, { ...existing, progress, speed, lastUpdate: now });
       } else {
         next.set(operationId, { ...existing, progress });
       }
-      
+
       set({ uploads: next });
     }
   },
