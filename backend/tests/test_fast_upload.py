@@ -31,11 +31,17 @@ from telethon.tl.types import InputFile, InputFileBig
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 def _make_client(dc_id: int = 2):
-    """Return a (client, sender) pair with all Telethon internals mocked."""
+    """Return a (client, sender) pair with all Telethon internals mocked.
+
+    client._sender is the primary sender used by fast_upload_file.
+    _borrow_exported_sender / _return_exported_sender are kept as AsyncMocks
+    so tests can assert they are NOT called.
+    """
     client = MagicMock()
     client.session.dc_id = dc_id
     sender = MagicMock()
     sender.send = AsyncMock(return_value=True)
+    client._sender = sender
     client._borrow_exported_sender = AsyncMock(return_value=sender)
     client._return_exported_sender = AsyncMock()
     return client, sender
@@ -192,12 +198,13 @@ async def test_progress_callback_called():
     assert calls[-1][1] == len(content)
 
 
-async def test_small_file_senders_returned():
+async def test_small_file_uses_primary_sender():
     content = b"r" * 100
     reader = io.BytesIO(content)
     client, _ = _make_client()
     await fast_upload_file(client, reader, len(content), "f.bin", connections=2)
-    assert client._return_exported_sender.called
+    assert not client._borrow_exported_sender.called
+    assert not client._return_exported_sender.called
 
 
 # ── fast_upload_file — big file (> 10 MB) tests ───────────────────────────────
@@ -229,10 +236,11 @@ async def test_big_file_correct_part_count():
     assert result.parts == math.ceil(BIG / CHUNK_SIZE)
 
 
-async def test_big_file_senders_returned():
+async def test_big_file_uses_primary_sender():
     client, _ = _make_client()
     await fast_upload_file(client, _FakeReader(BIG), BIG, "big.bin", connections=2)
-    assert client._return_exported_sender.called
+    assert not client._borrow_exported_sender.called
+    assert not client._return_exported_sender.called
 
 
 async def test_big_file_survives_one_flood_wait():

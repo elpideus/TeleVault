@@ -1,8 +1,7 @@
 """Parallel chunk uploader for Telethon — FastTelethon-style implementation.
 
-Uses multiple concurrent MTProto sender connections to upload different 512 KB
-chunks of the same file part in parallel, achieving 3–5× throughput vs.
-Telethon's built-in sequential uploader.
+Sends multiple 512 KB chunks concurrently over the existing MTProto connection,
+eliminating the sequential chunk bottleneck in Telethon's built-in send_file.
 
 Import path for callers: from app.telegram.fast_upload import fast_upload_document
 Do NOT re-export from operations.py — circular import risk.
@@ -17,10 +16,9 @@ import math  # noqa: F401
 import random  # noqa: F401
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-# These symbols are used by fast_upload_file and fast_upload_document (added in later tasks).  # noqa: F401
 from telethon.errors import FloodWaitError
-from telethon.tl.functions.upload import SaveBigFilePartRequest, SaveFilePartRequest  # noqa: F401
-from telethon.tl.types import DocumentAttributeFilename, InputFile, InputFileBig  # noqa: F401
+from telethon.tl.functions.upload import SaveBigFilePartRequest, SaveFilePartRequest
+from telethon.tl.types import DocumentAttributeFilename, InputFile, InputFileBig
 
 if TYPE_CHECKING:
     from telethon import TelegramClient
@@ -92,41 +90,18 @@ async def fast_upload_file(
     big = size > SMALL_FILE_THRESHOLD
     file_id = random.randint(-(2**63), 2**63 - 1)
     file_parts = math.ceil(size / CHUNK_SIZE)
-    dc_id: int = client.session.dc_id
 
-    # ── Borrow senders ────────────────────────────────────────────────────────
-    senders = []
-    _borrowed: list = []  # only borrowed senders need _return_exported_sender
+    # ── Set up senders ────────────────────────────────────────────────────────
+    # _borrow_exported_sender only works for cross-DC operations; calling it for
+    # the home DC raises ExportAuthorizationRequest and leaks TCP connections.
+    # Instead, use client._sender directly: MTProtoSender multiplexes concurrent
+    # send() calls over the existing authenticated connection, eliminating the
+    # sequential chunk bottleneck without needing multiple TCP connections.
+    actual = min(connections, file_parts)
+    senders = [client._sender] * actual
 
-    for _ in range(min(connections, file_parts)):
-        try:
-            sender = await client._borrow_exported_sender(dc_id)
-            senders.append(sender)
-            _borrowed.append(sender)
-        except FloodWaitError as e:
-            await asyncio.sleep(e.seconds)
-            try:
-                sender = await client._borrow_exported_sender(dc_id)
-                senders.append(sender)
-                _borrowed.append(sender)
-            except Exception as exc:
-                logger.warning("Failed to borrow exported sender after flood wait: %s", exc)
-        except Exception as exc:
-            logger.warning("Failed to borrow exported sender: %s", exc)
-
-    # Fallback: if no exported senders could be borrowed (e.g. Telethon internals
-    # unavailable), use the primary connection directly.  Uploads still work;
-    # they just run on a single connection instead of multiple.
-    if not senders:
-        logger.warning(
-            "Could not borrow any exported sender; falling back to primary connection "
-            "(single-connection upload — no parallelism)"
-        )
-        senders.append(client._sender)
-        # client._sender must NOT be passed to _return_exported_sender — do not add to _borrowed.
-
-    # Controller is initialized AFTER borrowing so limit == actual sender count.
-    controller = _ConcurrencyController(len(senders))
+    # Controller is initialized after so limit == actual concurrency slots.
+    controller = _ConcurrencyController(actual)
 
     # ── Small file path ───────────────────────────────────────────────────────
     if not big:
@@ -166,16 +141,9 @@ async def fast_upload_file(
                         await controller.release()
             raise RuntimeError(f"Chunk {part_index} failed after {max_retries} attempts")
 
-        try:
-            await asyncio.gather(
-                *[_upload_chunk_small(i, c) for i, c in enumerate(chunks_list)]
-            )
-        finally:
-            for s in _borrowed:
-                try:
-                    await client._return_exported_sender(s)
-                except Exception:
-                    pass
+        await asyncio.gather(
+            *[_upload_chunk_small(i, c) for i, c in enumerate(chunks_list)]
+        )
 
         return InputFile(
             id=file_id,
@@ -254,11 +222,6 @@ async def fast_upload_file(
         for t in producers + consumers:
             if not t.done():
                 t.cancel()
-        for s in _borrowed:
-            try:
-                await client._return_exported_sender(s)
-            except Exception:
-                pass
 
     return InputFileBig(id=file_id, parts=file_parts, name=name)
 
