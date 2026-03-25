@@ -257,28 +257,10 @@ async def test_big_file_survives_one_flood_wait():
 async def test_big_file_truncated_reader_raises():
     import pytest
 
-    class _TruncatedReader(io.RawIOBase):
-        """Returns data for only half the declared size."""
-        def __init__(self, real: int) -> None:
-            self._real = real
-            self._pos = 0
-
-        def read(self, n: int = -1) -> bytes:
-            remaining = self._real - self._pos
-            if remaining <= 0:
-                return b""
-            n = min(n, remaining) if n > 0 else remaining
-            self._pos += n
-            return b"\x00" * n
-
-        def readable(self) -> bool:
-            return True
-
     declared = BIG
-    actual = BIG // 2
     client, _ = _make_client()
 
     with pytest.raises(RuntimeError, match="truncated"):
         await fast_upload_file(
-            client, _TruncatedReader(actual), declared, "t.bin", connections=2
+            client, _FakeReader(BIG // 2), declared, "t.bin", connections=2
         )

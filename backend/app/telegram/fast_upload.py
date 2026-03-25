@@ -185,6 +185,7 @@ async def fast_upload_file(
                 break
             actual_parts_produced += 1
             await queue.put((part_index, data))
+        # Send one sentinel per consumer regardless of early-exit (e.g. truncated file).
         for _ in senders:
             await queue.put(None)  # one sentinel per consumer
 
@@ -192,34 +193,39 @@ async def fast_upload_file(
         sender = senders[sender_index]
         while True:
             item = await queue.get()
-            if item is None:
-                break
-            part_index, data = item
-            max_retries = 5
-            for attempt in range(max_retries):
-                acquired = False
-                try:
-                    await controller.acquire()
-                    acquired = True
-                    await sender.send(
-                        SaveBigFilePartRequest(file_id, part_index, file_parts, data)
-                    )
-                    if bytes_uploaded_big[part_index] == 0:
-                        bytes_uploaded_big[part_index] = len(data)
-                    if progress_callback:
-                        await progress_callback(sum(bytes_uploaded_big), size)
-                    break  # success
-                except FloodWaitError as e:
-                    await controller.on_flood_wait(e.seconds)
-                except (ConnectionError, OSError):
-                    await controller.on_connection_error()
-                except Exception:
-                    if attempt == max_retries - 1:
-                        raise
-                    await asyncio.sleep(2**attempt)
-                finally:
-                    if acquired:
-                        await controller.release()
+            try:
+                if item is None:
+                    break
+                part_index, data = item
+                max_retries = 5
+                for attempt in range(max_retries):
+                    acquired = False
+                    try:
+                        await controller.acquire()
+                        acquired = True
+                        await sender.send(
+                            SaveBigFilePartRequest(file_id, part_index, file_parts, data)
+                        )
+                        if bytes_uploaded_big[part_index] == 0:
+                            bytes_uploaded_big[part_index] = len(data)
+                        if progress_callback:
+                            await progress_callback(sum(bytes_uploaded_big), size)
+                        break  # success
+                    except FloodWaitError as e:
+                        await controller.on_flood_wait(e.seconds)
+                    except (ConnectionError, OSError):
+                        await controller.on_connection_error()
+                    except Exception:
+                        if attempt == max_retries - 1:
+                            raise
+                        await asyncio.sleep(2**attempt)
+                    finally:
+                        if acquired:
+                            await controller.release()
+                else:
+                    raise RuntimeError(f"Chunk {part_index} failed after {max_retries} attempts")
+            finally:
+                queue.task_done()
 
     producers = [asyncio.create_task(_producer())]
     consumers = [asyncio.create_task(_consumer(i)) for i in range(len(senders))]
