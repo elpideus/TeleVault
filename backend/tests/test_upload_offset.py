@@ -52,6 +52,7 @@ async def test_single_account_offset_zero_uses_account_zero(tmp_readable_file):
 
     async def fake_upload_document(client, channel_id, reader, **kwargs):
         used_clients.append(client)
+        assert "connections" in kwargs
         result = MagicMock()
         result.message_id = 1
         result.file_id = b"x"
@@ -59,7 +60,7 @@ async def test_single_account_offset_zero_uses_account_zero(tmp_readable_file):
         return result
 
     with (
-        patch("app.services.upload.upload_document", fake_upload_document),
+        patch("app.services.upload.fast_upload_document", fake_upload_document),
         patch("app.services.upload.AsyncSessionLocal") as mock_session,
         patch("app.services.upload.log_event", AsyncMock()),
     ):
@@ -79,6 +80,7 @@ async def test_single_account_offset_zero_uses_account_zero(tmp_readable_file):
                 emit_progress=AsyncMock(),
                 emit_done=AsyncMock(),
                 emit_error=AsyncMock(),
+                is_cancelled=MagicMock(return_value=False),
             ),
             pool=mock_pool,
             operation_id="op1",
@@ -106,6 +108,7 @@ async def test_two_accounts_offset_selects_different_primary(tmp_path):
 
     async def fake_upload_document(client, channel_id, reader, **kwargs):
         used_clients_by_op[current_op["id"]].append(client)
+        assert "connections" in kwargs
         result = MagicMock()
         result.message_id = 99
         result.file_id = b"y"
@@ -119,7 +122,7 @@ async def test_two_accounts_offset_selects_different_primary(tmp_path):
     )
 
     with (
-        patch("app.services.upload.upload_document", fake_upload_document),
+        patch("app.services.upload.fast_upload_document", fake_upload_document),
         patch("app.services.upload.AsyncSessionLocal") as mock_session,
         patch("app.services.upload.log_event", AsyncMock()),
     ):
@@ -129,7 +132,7 @@ async def test_two_accounts_offset_selects_different_primary(tmp_path):
         channel = MagicMock()
         channel.channel_id = 123
         channel.id = uuid.uuid4()
-        registry = MagicMock(emit_progress=AsyncMock(), emit_done=AsyncMock(), emit_error=AsyncMock())
+        registry = MagicMock(emit_progress=AsyncMock(), emit_done=AsyncMock(), emit_error=AsyncMock(), is_cancelled=MagicMock(return_value=False))
 
         # Create a fresh file for each call since execute_upload deletes tmp_path.
         file0 = tmp_path / "file0.bin"

@@ -5,12 +5,24 @@ import io
 import logging
 import math
 import os
+import time
 import uuid
+import random
 from dataclasses import dataclass
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from datetime import datetime, timedelta
+
+from sqlalchemy import or_, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from telethon.errors import (
+    AuthKeyDuplicatedError,
+    ChatAdminRequiredError,
+    ChatWriteForbiddenError,
+    ChannelPrivateError,
+    FloodWaitError,
+    UserBannedInChannelError,
+)
 
 from app.db.models.channel import Channel
 from app.db.models.file import FILE_STATUS_COMPLETE, FILE_STATUS_FAILED, FILE_STATUS_PENDING, File
@@ -20,11 +32,15 @@ from app.db.session import AsyncSessionLocal
 from app.services.events import log_event
 from app.services.progress import OperationRegistry
 from app.telegram.client_pool import ClientPool
-from app.telegram.operations import UploadedSplit, delete_message, upload_document
+from app.core.config import get_settings
+from app.telegram.fast_upload import fast_upload_document
+from app.telegram.operations import UploadedSplit, delete_message
 
 logger = logging.getLogger(__name__)
 
 _SPLIT_SIZE = 2_097_152_000
+# Seconds with no upload progress before the current attempt is considered stalled.
+_STALL_TIMEOUT = 120
 
 
 @dataclass
@@ -79,6 +95,12 @@ class _SplitReader(io.RawIOBase):
     def tell(self) -> int:
         return self._pos
 
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
     def close(self) -> None:
         self._f.close()
         super().close()
@@ -87,11 +109,27 @@ class _SplitReader(io.RawIOBase):
 async def check_duplicate(
     session: AsyncSession, owner_id: int, file_hash: str
 ) -> File | None:
+    """Return an existing file with the same hash, if any.
+
+    Checks both COMPLETE files (true duplicates) and recent PENDING files
+    (currently being uploaded).  Without the PENDING check, two concurrent
+    uploads of the same file both pass the duplicate gate and create two
+    separate Telegram messages — the root cause of "uploaded twice" reports.
+
+    PENDING files older than 6 hours are ignored so that stale records from
+    server crashes don't permanently block re-uploads.
+    """
     return await session.scalar(
         select(File).where(
             File.file_hash == file_hash,
             File.uploaded_by == owner_id,
-            File.status == FILE_STATUS_COMPLETE,
+            or_(
+                File.status == FILE_STATUS_COMPLETE,
+                and_(
+                    File.status == FILE_STATUS_PENDING,
+                    File.created_at >= datetime.utcnow() - timedelta(hours=6),
+                ),
+            ),
         )
     )
 
@@ -180,6 +218,15 @@ async def prepare_upload(
         )
 
     channel = await session.get(Channel, channel_id)
+    if channel is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "NO_CHANNEL_CONFIGURED",
+                "message": "No channel configured for upload.",
+                "detail": None,
+            },
+        )
     operation_id = registry.create_operation(owner_id)
     file_id = uuid.uuid4()
     num_splits = max(1, math.ceil(total_size / _SPLIT_SIZE))
@@ -217,6 +264,14 @@ async def execute_upload(
     # causing Cloudflare to timeout the original HTTP request with a 524.
     await asyncio.sleep(1.0)
 
+    if channel is None:
+        await registry.emit_error(operation_id, "Channel not found", message="No channel configured for upload")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return
+
     telegram_channel_id = channel.channel_id
     channel_id = channel.id
     num_splits = max(1, math.ceil(total_size / _SPLIT_SIZE))
@@ -244,10 +299,13 @@ async def execute_upload(
         raise RuntimeError("No active Telegram client for user")
 
     # Ensure all clients are connected before launching parallel uploads
-    for _, c in client_snapshot:
+    for account_id, c in client_snapshot:
         if not c.is_connected():
-            logger.info("Telegram client disconnected — reconnecting before upload %s", operation_id)
-            await c.connect()
+            logger.info("Telegram client %s disconnected — reconnecting before upload %s", account_id, operation_id)
+            lock = pool.get_lock(account_id)
+            async with lock:
+                if not c.is_connected():
+                    await c.connect()
 
     # Track bytes sent per split independently so the aggregated progress
     # is always the sum across all splits, not the last split to report.
@@ -272,46 +330,159 @@ async def execute_upload(
         split_size = min(_SPLIT_SIZE, total_size - offset)
         split_name = f"{filename}.part{split_index}" if multi else filename
 
+        # Throttle SSE emissions to once per second; track last progress time for stall detection.
+        _last_emit_at: list[float] = [0.0]
+        _last_progress_at: list[float] = [time.monotonic()]
+        # Set to True once all bytes are sent so the stall watchdog doesn't
+        # fire during Telegram's server-side confirmation window (which can
+        # exceed _STALL_TIMEOUT for large files, causing spurious retries and
+        # potential duplicate Telegram messages).
+        _fully_sent: list[bool] = [False]
+
         async def _on_progress(sent: int, _total: int) -> None:
-            _split_bytes_sent[split_index] = sent
-            total_sent = sum(_split_bytes_sent)
-            await registry.emit_progress(
-                operation_id,
-                total_sent,
-                total_size,
-                message=f"Uploading to Telegram… part {split_index + 1} of {num_splits}",
-            )
-            # Forcefully yield control to the event loop. Telethon's upload/encryption
-            # tight loop can starve the event loop, causing Uvicorn to hang on other requests.
-            await asyncio.sleep(0.01)
+            now = time.monotonic()
+            # High-water mark: Telethon may internally restart the upload on
+            # reconnect, sending `sent` back to 0.  We keep the peak value so
+            # the user-visible progress bar never jumps backwards within one
+            # attempt.  Our explicit retry loop resets the counter to 0 before
+            # creating a new upload task, so cross-attempt resets still work.
+            if sent >= _split_bytes_sent[split_index]:
+                _split_bytes_sent[split_index] = sent
+            _last_progress_at[0] = now
+            if sent >= split_size:
+                _fully_sent[0] = True
+            if now - _last_emit_at[0] >= 1.0:
+                _last_emit_at[0] = now
+                total_sent = sum(_split_bytes_sent)
+                await registry.emit_progress(
+                    operation_id,
+                    total_sent,
+                    total_size,
+                    message=f"Uploading to Telegram… part {split_index + 1} of {num_splits}",
+                )
+            # Yield to the event loop so Uvicorn can serve other requests.
+            await asyncio.sleep(0)
 
-        # Allow at least 30 min or 50 KB/s, whichever is longer.
-        # Prevents indefinite hangs when a Telegram session silently expires.
-        upload_timeout = max(1800, split_size // 51200)
+        async def _stall_watchdog() -> None:
+            """Raise TimeoutError if no upload progress for _STALL_TIMEOUT seconds.
 
-        reader = _SplitReader(tmp_path, offset, split_size, split_name)
-        try:
-            # Cancelled while waiting to start this split?
-            if registry.is_cancelled(operation_id):
-                raise asyncio.CancelledError
-            result = await asyncio.wait_for(
-                upload_document(
-                    client,
-                    telegram_channel_id,
-                    reader,
-                    filename=split_name,
-                    size=split_size,
-                    progress_callback=_on_progress,
-                ),
-                timeout=upload_timeout,
-            )
-        except asyncio.TimeoutError:
-            raise RuntimeError(
-                f"Telegram upload timed out after {upload_timeout}s "
-                f"(split {split_index}, {split_size} bytes)"
-            )
-        finally:
-            reader.close()
+            Stall detection is skipped once all bytes have been sent: at that
+            point Telegram is doing server-side processing/confirmation which
+            can take several minutes for large files.  Cancelling during that
+            window would cause a spurious retry that re-uploads all bytes and
+            may create a duplicate message in the channel.
+            """
+            while True:
+                await asyncio.sleep(30)
+                if _fully_sent[0]:
+                    # All bytes sent — Telegram is processing; don't stall-cancel.
+                    continue
+                if time.monotonic() - _last_progress_at[0] >= _STALL_TIMEOUT:
+                    raise asyncio.TimeoutError(
+                        f"Upload stalled: no progress for {_STALL_TIMEOUT}s on split {split_index}"
+                    )
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            reader = _SplitReader(tmp_path, offset, split_size, split_name)
+            _last_progress_at[0] = time.monotonic()  # reset stall timer each attempt
+            _fully_sent[0] = False                    # reset per-attempt sent flag
+            _split_bytes_sent[split_index] = 0        # reset so progress doesn't linger at old value
+            upload_task: asyncio.Task | None = None
+            watchdog_task: asyncio.Task | None = None
+            try:
+                # Cancelled while waiting to start this split?
+                if registry.is_cancelled(operation_id):
+                    raise asyncio.CancelledError
+
+                # Ensure connected (atomic check-and-connect)
+                if not client.is_connected():
+                    async with pool.get_lock(account_id):
+                        if not client.is_connected():
+                            await client.connect()
+
+                upload_task = asyncio.create_task(
+                    fast_upload_document(
+                        client,
+                        telegram_channel_id,
+                        reader,
+                        filename=split_name,
+                        size=split_size,
+                        connections=get_settings().parallel_upload_connections,
+                        progress_callback=_on_progress,
+                    )
+                )
+                watchdog_task = asyncio.create_task(_stall_watchdog())
+
+                done, _ = await asyncio.wait(
+                    {upload_task, watchdog_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                watchdog_task.cancel()
+                if upload_task not in done:
+                    # Stall watchdog fired first — cancel the upload and retry.
+                    upload_task.cancel()
+                    raise asyncio.TimeoutError(
+                        f"Upload stalled: no progress for {_STALL_TIMEOUT}s on split {split_index}"
+                    )
+
+                result = upload_task.result()  # re-raises any upload exception
+                break  # Success!
+
+            except AuthKeyDuplicatedError:
+                logger.warning(
+                    "Session conflict (AuthKeyDuplicatedError) for account %s on attempt %d. "
+                    "Disconnecting and retrying in 5s...",
+                    account_id, attempt + 1
+                )
+                await client.disconnect()
+                await asyncio.sleep(5)
+                if attempt == max_retries - 1:
+                    raise
+
+            except (ChatAdminRequiredError, ChatWriteForbiddenError,
+                    ChannelPrivateError, UserBannedInChannelError) as exc:
+                # Permanent permission error — retrying will never succeed.
+                # Raise immediately with a clear, actionable message.
+                logger.error(
+                    "Permanent Telegram permission error for account %s on channel %d: %s. "
+                    "Ensure the account has 'Post Messages' admin rights in the channel.",
+                    account_id, telegram_channel_id, type(exc).__name__,
+                )
+                raise RuntimeError(
+                    f"Telegram account lacks permission to post in this channel "
+                    f"({type(exc).__name__}). Check that the account has "
+                    f"'Post Messages' admin rights."
+                ) from exc
+
+            except FloodWaitError as exc:
+                wait_time = exc.seconds + 1
+                logger.warning("FloodWait for account %s: waiting %ds", account_id, wait_time)
+                await asyncio.sleep(wait_time)
+                if attempt == max_retries - 1:
+                    raise
+
+            except asyncio.TimeoutError:
+                logger.warning("Upload stalled (split %d, attempt %d)", split_index, attempt + 1)
+                if attempt == max_retries - 1:
+                    raise RuntimeError(
+                        f"Upload stalled after {_STALL_TIMEOUT}s "
+                        f"(split {split_index}, {split_size} bytes)"
+                    )
+                await asyncio.sleep(2 ** attempt + random.random())
+
+            except Exception:
+                logger.exception("Unexpected error during Telegram upload (split %d, attempt %d)", split_index, attempt + 1)
+                if attempt == max_retries - 1:
+                    raise
+                await asyncio.sleep(2 ** attempt + random.random())
+
+            finally:
+                for t in [upload_task, watchdog_task]:
+                    if t is not None and not t.done():
+                        t.cancel()
+                reader.close()
 
         return UploadedSplitResult(
             split_index=split_index,
