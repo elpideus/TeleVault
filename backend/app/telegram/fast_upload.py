@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib  # noqa: F401  (used by fast_upload_file)
-import io  # noqa: F401
+import io
 import logging
 import math  # noqa: F401
 import random  # noqa: F401
@@ -247,3 +247,36 @@ async def fast_upload_file(
                 pass
 
     return InputFileBig(id=file_id, parts=file_parts, name=name)
+
+
+async def fast_upload_document(
+    client: "TelegramClient",
+    channel_id: int,
+    document: io.RawIOBase,
+    filename: str,
+    size: int,
+    connections: int,
+    progress_callback=None,
+) -> UploadedSplit:
+    """Upload a document using parallel chunk uploading, then commit to a channel.
+
+    Uses fast_upload_file for chunk delivery, then client.send_file with the
+    pre-uploaded InputFile/InputFileBig reference. Must use the SAME client
+    instance for both operations — pre-uploaded file references are tied to
+    the uploading session.
+    """
+    input_file = await fast_upload_file(
+        client, document, size, filename, connections, progress_callback
+    )
+    msg = await client.send_file(
+        channel_id,
+        input_file,
+        attributes=[DocumentAttributeFilename(file_name=filename)],
+        force_document=True,
+        file_size=size,
+    )
+    return UploadedSplit(
+        message_id=msg.id,
+        file_id=str(msg.document.id),
+        file_unique_id=str(msg.document.access_hash),
+    )

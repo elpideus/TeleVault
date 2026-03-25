@@ -264,3 +264,53 @@ async def test_big_file_truncated_reader_raises():
         await fast_upload_file(
             client, _FakeReader(BIG // 2), declared, "t.bin", connections=2
         )
+
+
+# ── fast_upload_document tests ────────────────────────────────────────────────
+
+from app.telegram.fast_upload import fast_upload_document
+from app.telegram.operations import UploadedSplit
+
+
+async def test_fast_upload_document_calls_send_file():
+    """fast_upload_document calls client.send_file with the pre-uploaded InputFile/InputFileBig."""
+    import io as _io
+    content = b"doc" * 100
+    reader = _io.BytesIO(content)
+    client, _ = _make_client()
+
+    doc_msg = MagicMock()
+    doc_msg.id = 42
+    doc_msg.document.id = 99
+    doc_msg.document.access_hash = 12345
+    client.send_file = AsyncMock(return_value=doc_msg)
+
+    result = await fast_upload_document(client, 123, reader, "doc.bin", len(content), connections=1)
+
+    assert client.send_file.called
+    call_kwargs = client.send_file.call_args
+    # First positional arg is channel_id=123, second is the InputFile
+    assert call_kwargs.args[0] == 123
+    from telethon.tl.types import InputFile, InputFileBig
+    assert isinstance(call_kwargs.args[1], (InputFile, InputFileBig))
+
+
+async def test_fast_upload_document_returns_uploaded_split():
+    """fast_upload_document returns UploadedSplit with correct message_id, file_id, file_unique_id."""
+    import io as _io
+    content = b"x" * 50
+    reader = _io.BytesIO(content)
+    client, _ = _make_client()
+
+    doc_msg = MagicMock()
+    doc_msg.id = 7
+    doc_msg.document.id = 888
+    doc_msg.document.access_hash = 999
+    client.send_file = AsyncMock(return_value=doc_msg)
+
+    result = await fast_upload_document(client, 456, reader, "f.txt", len(content), connections=1)
+
+    assert isinstance(result, UploadedSplit)
+    assert result.message_id == 7
+    assert result.file_id == "888"
+    assert result.file_unique_id == "999"
