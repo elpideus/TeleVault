@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 try:
     from pydantic_settings.env_settings import EnvSettingsSource
@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     api_port: int = 8000
     upload_chunk_size: int = 2 * 1024 * 1024  # 2 MB — at 20 KB/s this still completes in ~100s, well within Cloudflare's timeout
     upload_max_parallel_chunks: int = 2  # keep server pressure low; more parallelism caused 524s under load
+    parallel_upload_connections: int = Field(default=8, ge=1)
+    # Controls concurrent MTProto sender connections per split when uploading to Telegram.
+    # Reads from PARALLEL_UPLOAD_CONNECTIONS env var.
 
     @field_validator("cors_origins", mode="before")
     @classmethod
