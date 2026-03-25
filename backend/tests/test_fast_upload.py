@@ -198,3 +198,87 @@ async def test_small_file_senders_returned():
     client, _ = _make_client()
     await fast_upload_file(client, reader, len(content), "f.bin", connections=2)
     assert client._return_exported_sender.called
+
+
+# ── fast_upload_file — big file (> 10 MB) tests ───────────────────────────────
+
+from app.telegram.fast_upload import SMALL_FILE_THRESHOLD
+
+BIG = CHUNK_SIZE * 25  # 12.5 MB — just over SMALL_FILE_THRESHOLD
+
+
+async def test_big_file_returns_input_file_big():
+    client, _ = _make_client()
+    result = await fast_upload_file(client, _FakeReader(BIG), BIG, "big.bin", connections=2)
+    assert isinstance(result, InputFileBig)
+
+
+async def test_big_file_uses_save_big_file_part_request():
+    from telethon.tl.functions.upload import SaveBigFilePartRequest
+    client, sender = _make_client()
+    sent_requests = []
+    sender.send = AsyncMock(side_effect=lambda r: sent_requests.append(r) or True)
+    await fast_upload_file(client, _FakeReader(BIG), BIG, "big.bin", connections=2)
+    assert all(isinstance(r, SaveBigFilePartRequest) for r in sent_requests)
+    assert len(sent_requests) == math.ceil(BIG / CHUNK_SIZE)
+
+
+async def test_big_file_correct_part_count():
+    client, _ = _make_client()
+    result = await fast_upload_file(client, _FakeReader(BIG), BIG, "big.bin", connections=2)
+    assert result.parts == math.ceil(BIG / CHUNK_SIZE)
+
+
+async def test_big_file_senders_returned():
+    client, _ = _make_client()
+    await fast_upload_file(client, _FakeReader(BIG), BIG, "big.bin", connections=2)
+    assert client._return_exported_sender.called
+
+
+async def test_big_file_survives_one_flood_wait():
+    """Upload completes even if one chunk gets a FloodWaitError on first attempt."""
+    from telethon.errors import FloodWaitError as _FWE
+    client, sender = _make_client()
+    call_count = 0
+
+    async def _send_with_one_flood(request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Construct FloodWaitError with capture=0 for instant retry
+            raise _FWE(request=request, capture=0)
+        return True
+
+    sender.send = _send_with_one_flood
+    result = await fast_upload_file(client, _FakeReader(BIG), BIG, "big.bin", connections=2)
+    assert isinstance(result, InputFileBig)
+
+
+async def test_big_file_truncated_reader_raises():
+    import pytest
+
+    class _TruncatedReader(io.RawIOBase):
+        """Returns data for only half the declared size."""
+        def __init__(self, real: int) -> None:
+            self._real = real
+            self._pos = 0
+
+        def read(self, n: int = -1) -> bytes:
+            remaining = self._real - self._pos
+            if remaining <= 0:
+                return b""
+            n = min(n, remaining) if n > 0 else remaining
+            self._pos += n
+            return b"\x00" * n
+
+        def readable(self) -> bool:
+            return True
+
+    declared = BIG
+    actual = BIG // 2
+    client, _ = _make_client()
+
+    with pytest.raises(RuntimeError, match="truncated"):
+        await fast_upload_file(
+            client, _TruncatedReader(actual), declared, "t.bin", connections=2
+        )

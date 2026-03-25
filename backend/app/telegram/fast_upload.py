@@ -170,5 +170,74 @@ async def fast_upload_file(
             md5_checksum=md5_hex,
         )
 
-    # ── Big file path (implemented in Task 4) ─────────────────────────────────
-    raise NotImplementedError("Big file path not yet implemented")
+    # ── Big file path — producer/consumer streaming ───────────────────────────
+    queue: asyncio.Queue[tuple[int, bytes] | None] = asyncio.Queue(
+        maxsize=len(senders) * 2
+    )
+    bytes_uploaded_big: list[int] = [0] * file_parts
+    actual_parts_produced = 0
+
+    async def _producer() -> None:
+        nonlocal actual_parts_produced
+        for part_index in range(file_parts):
+            data = reader.read(CHUNK_SIZE)
+            if not data:
+                break
+            actual_parts_produced += 1
+            await queue.put((part_index, data))
+        for _ in senders:
+            await queue.put(None)  # one sentinel per consumer
+
+    async def _consumer(sender_index: int) -> None:
+        sender = senders[sender_index]
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            part_index, data = item
+            max_retries = 5
+            for attempt in range(max_retries):
+                acquired = False
+                try:
+                    await controller.acquire()
+                    acquired = True
+                    await sender.send(
+                        SaveBigFilePartRequest(file_id, part_index, file_parts, data)
+                    )
+                    if bytes_uploaded_big[part_index] == 0:
+                        bytes_uploaded_big[part_index] = len(data)
+                    if progress_callback:
+                        await progress_callback(sum(bytes_uploaded_big), size)
+                    break  # success
+                except FloodWaitError as e:
+                    await controller.on_flood_wait(e.seconds)
+                except (ConnectionError, OSError):
+                    await controller.on_connection_error()
+                except Exception:
+                    if attempt == max_retries - 1:
+                        raise
+                    await asyncio.sleep(2**attempt)
+                finally:
+                    if acquired:
+                        await controller.release()
+
+    producers = [asyncio.create_task(_producer())]
+    consumers = [asyncio.create_task(_consumer(i)) for i in range(len(senders))]
+    try:
+        await asyncio.gather(*producers, *consumers)
+        if actual_parts_produced != file_parts:
+            raise RuntimeError(
+                f"File read produced {actual_parts_produced} parts, "
+                f"expected {file_parts}. File may have been truncated."
+            )
+    finally:
+        for t in producers + consumers:
+            if not t.done():
+                t.cancel()
+        for s in senders:
+            try:
+                await client._return_exported_sender(s)
+            except Exception:
+                pass
+
+    return InputFileBig(id=file_id, parts=file_parts, name=name)
