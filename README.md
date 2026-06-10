@@ -246,9 +246,15 @@ Every donation helps keep the project alive and motivated. Thank you for your su
 
 ---
 
+## 🗺️ Roadmap
+
+See the [pinned roadmap issue](https://github.com/elpideus/TeleVault/issues/29) for a full checklist of open improvements and missing features, ordered by priority. Each item links to a dedicated issue with context, design decisions, and the exact files to touch.
+
+---
+
 ## 🤝 Contributing
 
-Contributions are welcome! ✨ Please open an issue to discuss significant changes before submitting a pull request.
+Contributions are welcome! ✨ Check the [roadmap](https://github.com/elpideus/TeleVault/issues/29) for something to work on, leave a comment on the issue to claim it, then open a pull request against `main`.
 
 1. Fork the repository 🍴
 2. Create a feature branch (`git checkout -b feature/my-feature`) 🌿
